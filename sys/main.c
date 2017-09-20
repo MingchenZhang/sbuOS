@@ -3,11 +3,22 @@
 #include <sys/kprintf.h>
 #include <sys/tarfs.h>
 #include <sys/ahci.h>
+#include <sys/idt.h>
+#include <sys/misc.h>
+#include <sys/config.h>
 
 #define INITIAL_STACK_SIZE 4096
 uint8_t initial_stack[INITIAL_STACK_SIZE]__attribute__((aligned(16)));
 uint32_t* loader_stack;
 extern char kernmem, physbase;
+
+void init_timer(uint32_t frequency)
+{
+   uint32_t divider = 1193180 / frequency;
+   asm_outb(0x43, 0x36); // start sending divider
+   asm_outb(0x40, divider & 0xFF); // set low bit
+   asm_outb(0x40, (divider>>8) & 0xFF); // set high bit
+}
 
 void start(uint32_t *modulep, void *physbase, void *physfree)
 {
@@ -23,7 +34,18 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
   }
   kprintf("physfree %p\n", (uint64_t)physfree);
   kprintf("tarfs in [%p:%p]\n", &_binary_tarfs_start, &_binary_tarfs_end);
-  while(1);
+  
+  init_idt();
+  //init_pic(); // it seems pic has been configured
+  
+  init_timer(PIT_FREQUENCY);
+  
+  clear_screen();
+  
+  // enable the interrupt
+  __asm__ volatile("sti");
+  
+  while(1) __asm__("hlt\n\t");
 }
 
 void boot(void)
