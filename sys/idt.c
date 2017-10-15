@@ -156,6 +156,7 @@ void isr_handler(handler_reg reg){
 		handle_keyboard_scan_code(c);
 	}else{
 		kprintf("unhandled interrupt on vector: %d\n", reg.int_num);
+		while(1); // halt the system to figure out what's wrong
 	}
 	if(reg.int_num >= 32 && reg.int_num < 48){ // a PIC interrupt
 		if (reg.int_num >= 40){ // it came from PIC

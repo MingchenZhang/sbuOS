@@ -1,6 +1,8 @@
 #ifndef _AHCI_H
 #define _AHCI_H
 
+#include <sys/defs.h>
+
 #define HBA_GHC_AE     (1U << 31)
 #define HBA_GHC_IE     (1U << 1)
 #define HBA_GHC_HR     (1U)
@@ -29,6 +31,8 @@
 
 #define MAX_CMD_SLOT_CNT 32
 #define MAX_PORT_CNT     32
+
+#define PRDT_ENTRIES_PER_COMMAND_TABLE 8
 
 typedef enum {
   FIS_TYPE_REG_H2D = 0x27,   // Register FIS - host to device
@@ -234,7 +238,7 @@ typedef struct {
   // 0x50
   uint8_t rsv[48];           // Reserved
   // 0x80
-  hba_prdt_entry_t prdt_entry[1]; // Physical region descriptor table entries, 0 ~ 65535
+  hba_prdt_entry_t prdt_entry[PRDT_ENTRIES_PER_COMMAND_TABLE]; // Physical region descriptor table entries, 0 ~ 65535
 }__attribute__((__packed__)) __attribute__((aligned(128))) hba_cmd_tbl_t;
 
 /* Command Header */
@@ -333,5 +337,10 @@ typedef volatile struct {
   // 0x100 - 0x10FF, Port control registers
   hba_port_t ports[MAX_PORT_CNT]; // 1 ~ 32
 }__attribute__((__packed__)) hba_mem_t;
+
+void init_ahci(void* map_addr);
+int test_read(int sector_count, int disk_index);
+int test_write_read(int sector_count, int disk_index);
+int test_wp3();
 
 #endif

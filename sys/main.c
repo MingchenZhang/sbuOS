@@ -6,8 +6,11 @@
 #include <sys/idt.h>
 #include <sys/misc.h>
 #include <sys/config.h>
+#include <sys/pci.h>
+#include <sys/memory/phy_page.h>
+#include <sys/memory/kmalloc.h>
 
-#define INITIAL_STACK_SIZE 4096
+#define INITIAL_STACK_SIZE 8192
 uint8_t initial_stack[INITIAL_STACK_SIZE]__attribute__((aligned(16)));
 uint32_t* loader_stack;
 extern char kernmem, physbase;
@@ -20,57 +23,92 @@ void init_timer(uint32_t frequency)
    asm_outb(0x40, (divider>>8) & 0xFF); // set high bit
 }
 
+int check_bytes(void* ptr, uint8_t value, uint64_t size){
+	uint8_t* ptr2 = ptr;
+	for(uint64_t i=0; i<size; i++){
+		if(ptr2[i] != value) return 0;
+	}
+	return 1;
+}
+
 void start(uint32_t *modulep, void *physbase, void *physfree)
 {
-  struct smap_t {
-    uint64_t base, length;
-    uint32_t type;
-  }__attribute__((packed)) *smap;
-  while(modulep[0] != 0x9001) modulep += modulep[1]+2;
-  for(smap = (struct smap_t*)(modulep+2); smap < (struct smap_t*)((char*)modulep+modulep[1]+2*4); ++smap) {
-    if (smap->type == 1 /* memory */ && smap->length != 0) {
-      kprintf("Available Physical Memory [%p-%p]\n", smap->base, smap->base + smap->length);
-    }
-  }
-  kprintf("physfree %p\n", (uint64_t)physfree);
-  kprintf("tarfs in [%p:%p]\n", &_binary_tarfs_start, &_binary_tarfs_end);
-  
-  init_idt();
-  //init_pic(); // it seems pic has been configured
-  
-  init_timer(PIT_FREQUENCY);
-  
-  clear_screen();
-  
-  // enable the interrupt
-  __asm__ volatile("sti");
-  
-  while(1) __asm__("hlt\n\t");
+	
+	clear_screen();
+	
+	kprintf("physfree %p\n", (uint64_t)physfree);
+	kprintf("physbase %p\n", (uint64_t)physbase);
+	kprintf("tarfs in [%p:%p]\n", &_binary_tarfs_start, &_binary_tarfs_end);
+
+	init_idt();
+	// init_pic(); // it seems pic has been configured
+
+	// init_timer(PIT_FREQUENCY);
+
+	// kprintf("screen cleared\n");
+
+	// enable the interrupt
+	__asm__ volatile("sti;");
+	
+	phy_page_init(modulep);
+	kernel_page_table_init();
+	
+	// for(int i=0; i<512; i++){
+		// kbrk(4096);
+	// }
+	// void* point0 = kbrk(4096);
+	// memset(point0, 0b10101010, 4096);
+	// void* point1 = kbrk(4096);
+	// memset(point1, 0b01010101, 4096);
+	// void* point2 = kbrk(4096);
+	// memset(point2, 0b10101010, 4096);
+	// kprintf("1:%p, 2:%p, 3:%p\n", point0, point1, point2);
+	// if(!check_bytes(point0, 0b10101010, 4096)) kprintf("Wrong !!\n");
+	// if(!check_bytes(point1, 0b01010101, 4096)) kprintf("Wrong !!\n");
+	// if(!check_bytes(point2, 0b10101010, 4096)) kprintf("Wrong !!\n");
+	// kprintf("point2: %x\n", *(uint64_t*)point0);
+	
+	int* num1 = sf_malloc(4000);
+	*num1 = 3432;
+	kprintf("num1 = %d, at %p\n", *num1, num1);
+	sf_free(num1);
+	int* num2 = sf_malloc(4);
+	*num2 = 67867;
+	kprintf("num1 = %d, at %p\n", *num2, num2);
+	
+	
+	// kprintf("init pci\n");
+	// init_pci();
+	// kprintf("init pci done\n");
+	
+	
+
+	while(1) __asm__("hlt;");
 }
 
 void boot(void)
 {
-  // note: function changes rsp, local stack variables can't be practically used
-  register char *temp1, *temp2;
+	// note: function changes rsp, local stack variables can't be practically used
+	register char *temp1, *temp2;
 
-  for(temp2 = (char*)0xb8001; temp2 < (char*)0xb8000+160*25; temp2 += 2) *temp2 = 7 /* white */;
-  __asm__ volatile (
-    "cli;"
-    "movq %%rsp, %0;"
-    "movq %1, %%rsp;"
-    :"=g"(loader_stack)
-    :"r"(&initial_stack[INITIAL_STACK_SIZE])
-  );
-  init_gdt();
-  start(
-    (uint32_t*)((char*)(uint64_t)loader_stack[3] + (uint64_t)&kernmem - (uint64_t)&physbase),
-    (uint64_t*)&physbase,
-    (uint64_t*)(uint64_t)loader_stack[4]
-  );
-  for(
-    temp1 = "!!!!! start() returned !!!!!", temp2 = (char*)0xb8000;
-    *temp1;
-    temp1 += 1, temp2 += 2
-  ) *temp2 = *temp1;
-  while(1) __asm__ volatile ("hlt");
+	for(temp2 = (char*)0xb8001; temp2 < (char*)0xb8000+160*25; temp2 += 2) *temp2 = 7 /* white */;
+		__asm__ volatile (
+		"cli;"
+		"movq %%rsp, %0;"
+		"movq %1, %%rsp;"
+		:"=g"(loader_stack)
+		:"r"(&initial_stack[INITIAL_STACK_SIZE])
+	);
+	init_gdt();
+	start(
+		(uint32_t*)((char*)(uint64_t)loader_stack[3] + (uint64_t)&kernmem - (uint64_t)&physbase),
+		(uint64_t*)&physbase,
+		(uint64_t*)(uint64_t)loader_stack[4]
+	);
+	for(
+		temp1 = "!!!!! start() returned !!!!!", temp2 = (char*)0xb8000;
+		*temp1;
+		temp1 += 1, temp2 += 2
+	) *temp2 = *temp1;
+	while(1) __asm__ volatile ("hlt");
 }

@@ -1,6 +1,8 @@
 #ifndef __KPRINTF_H
 #define __KPRINTF_H
 
+#include <sys/defs.h>
+
 // not reentry safe
 void kprintf(const char *fmt, ...);
 // not reentry safe (extremely)

@@ -236,11 +236,17 @@ void print_pointer(void* input, void (*print_func)(char)) {
         if(point_char[i]!='0'){
             break;
         }
-        i++;
+		i++;		
     }
+	if(point_char[i]=='\0'){
+		print_func('0');
+		print_func('0');
+	}
+	else {
     while(i<point_char_index){
 		print_func(point_char[i]);
 		i++;
+		}
 	}
 }
     
@@ -273,14 +279,20 @@ void print_hex(unsigned long input, void (*print_func)(char)) {
     print_func('0');
     print_func('x');
     int print_index=0;
-    while(hex_char[print_index]=='0'){            
+    while(hex_char[print_index]=='0' && print_index<hex_char_index){            
         if(hex_char[print_index]!='0'){
             break;
-        }
-         print_index++;
+        }		
+         print_index++;		 
     }
+	if(hex_char[print_index]=='\0'){
+		print_func('0');
+		print_func('0');
+	}
+	else {
     while(print_index<hex_char_index){
         print_func(hex_char[print_index]);
         print_index++;
     }
+	}
 }
