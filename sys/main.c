@@ -9,6 +9,7 @@
 #include <sys/pci.h>
 #include <sys/memory/phy_page.h>
 #include <sys/memory/kmalloc.h>
+#include <sys/thread/kthread.h>
 
 #define INITIAL_STACK_SIZE 8192
 uint8_t initial_stack[INITIAL_STACK_SIZE]__attribute__((aligned(16)));
@@ -31,6 +32,46 @@ int check_bytes(void* ptr, uint8_t value, uint64_t size){
 	return 1;
 }
 
+void test_func_1(){
+	for(uint64_t i=0; ;i++){
+		if(i%0x20000000 == 0){
+			// kprintf("test_func_1 reach %x\n", i);
+			__asm__ volatile (
+			"movq $100, %rdi;"
+			"int $0x80;");
+		}
+	}
+}
+
+void test_func_2(){
+	for(uint64_t i=0; ;i++){
+		if(i%0x17000000 == 0){
+			// kprintf("test_func_2 reach %x\n", i);
+			__asm__ volatile (
+			"movq $101, %rdi;"
+			"int $0x80;");
+		}
+	}
+}
+
+void test_func_3(){
+	for(uint64_t i=0; ;i++){
+		if(i%0x15000000 == 0){
+			// kprintf("test_func_3 reach %x\n", i);
+			__asm__ volatile (
+			"movq $102, %rdi;"
+			"int $0x80;");
+		}
+	}
+}
+
+void test_func(){
+	int volatile a = 43;
+	a+=5;
+	__asm__ volatile ("int $1;");
+	kprintf("", a);
+}
+
 void start(uint32_t *modulep, void *physbase, void *physfree)
 {
 	
@@ -43,7 +84,7 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 	init_idt();
 	// init_pic(); // it seems pic has been configured
 
-	// init_timer(PIT_FREQUENCY);
+	init_timer(PIT_FREQUENCY);
 
 	// kprintf("screen cleared\n");
 
@@ -68,14 +109,19 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 	// if(!check_bytes(point2, 0b10101010, 4096)) kprintf("Wrong !!\n");
 	// kprintf("point2: %x\n", *(uint64_t*)point0);
 	
-	int* num1 = sf_malloc(4000);
-	*num1 = 3432;
-	kprintf("num1 = %d, at %p\n", *num1, num1);
-	sf_free(num1);
-	int* num2 = sf_malloc(4);
-	*num2 = 67867;
-	kprintf("num1 = %d, at %p\n", *num2, num2);
+	// int* num1 = sf_malloc(4000);
+	// *num1 = 3432;
+	// kprintf("num1 = %d, at %p\n", *num1, num1);
+	// sf_free(num1);
+	// int* num2 = sf_malloc(4);
+	// *num2 = 67867;
+	// kprintf("num1 = %d, at %p\n", *num2, num2);
 	
+	test_spawn_process(&test_func_1, (uint64_t)test_func_2-(uint64_t)test_func_1);
+	test_spawn_process(&test_func_2, (uint64_t)test_func_3-(uint64_t)test_func_2);
+	test_spawn_process(&test_func_3, (uint64_t)test_func-(uint64_t)test_func_3);
+	kprintf("threads created\n");
+	__asm__ volatile ("int $0x80;");
 	
 	// kprintf("init pci\n");
 	// init_pci();

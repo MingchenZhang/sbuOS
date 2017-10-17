@@ -4,84 +4,14 @@
 
 typedef struct page_entry{
 	void* base;
-	char used_by; // 0: not used, 1: page entry, 2: kernel page table
+	char used_by; // 0: not used, 1: page entry, 2: kernel page table, 3: user process
 } page_entry;
 
 typedef struct kmalloc_usage_entry{
 	void* phy_addr;
 } kmalloc_usage_entry;
 
-typedef struct CR3{
-	uint64_t reserve1:  3;
-	uint64_t PWT:       1;
-	uint64_t PCD:       1;
-	uint64_t reserve2:  7;
-	uint64_t address:  40;
-	uint64_t reserve3: 12;
-}__attribute__((__packed__)) CR3;
 
-typedef struct PML4E{
-	uint64_t P:         1; // present?
-	uint64_t RW:        1; // read/write?
-	uint64_t US:        1; // ring0 only?
-	uint64_t PWT:       1; // writeback caching policy? or writethrough caching policy?
-	uint64_t PCD:       1; // not cacheable?
-	uint64_t A:         1; // has been accessed?
-	uint64_t IGN:       1;
-	uint64_t MBZ:       2;
-	uint64_t space1:    3;
-	uint64_t PDPE_addr:40;
-	uint64_t space2:   11;
-	uint64_t NX:        1; // no execute?
-}__attribute__((__packed__)) PML4E;
-
-typedef struct PDPE{
-	uint64_t P:         1;
-	uint64_t RW:        1;
-	uint64_t US:        1;
-	uint64_t PWT:       1;
-	uint64_t PCD:       1;
-	uint64_t A:         1;
-	uint64_t IGN:       1;
-	uint64_t PS:        1;
-	uint64_t MBZ:       1;
-	uint64_t space1:    3;
-	uint64_t PDPE_addr:40;
-	uint64_t space2:   11;
-	uint64_t NX:        1;
-}__attribute__((__packed__)) PDPE;
-
-typedef struct PDE{
-	uint64_t P:         1;
-	uint64_t RW:        1;
-	uint64_t US:        1;
-	uint64_t PWT:       1;
-	uint64_t PCD:       1;
-	uint64_t A:         1;
-	uint64_t IGN:       1;
-	uint64_t PS:        1;
-	uint64_t IGN2:      1;
-	uint64_t space1:    3;
-	uint64_t PDPE_addr:40;
-	uint64_t space2:   11;
-	uint64_t NX:        1;
-}__attribute__((__packed__)) PDE;
-
-typedef struct PTE{
-	uint64_t P:         1;
-	uint64_t RW:        1;
-	uint64_t US:        1;
-	uint64_t PWT:       1;
-	uint64_t PCD:       1;
-	uint64_t A:         1;
-	uint64_t D:         1;
-	uint64_t PAT:       1;
-	uint64_t G:         1;
-	uint64_t space1:    3;
-	uint64_t PDPE_addr:40;
-	uint64_t space2:   11;
-	uint64_t NX:        1;
-}__attribute__((__packed__)) PTE;
 
 
 struct page_entry* page_entry_base;
@@ -200,6 +130,7 @@ void kernel_page_table_init(){
 	PDPE* PDP1 = get_phy_page(1, 2);
 	PDPE* PDP2 = get_phy_page(1, 2);
 	PDE* PD = get_phy_page(1, 2);
+	kernel_malloc_pd = PD;
 	
 	memset(PML4, 0, 4096);
 	memset(PDP1, 0, 4096);
@@ -209,46 +140,46 @@ void kernel_page_table_init(){
 	PML4E* pml1 = PML4 + 511; // upper pml4 entry
 	pml1->P = 1;
 	pml1->RW = 1;
-	pml1->US = 0;
+	pml1->US = 1;
 	pml1->PDPE_addr = (uint64_t)PDP1 >> 12;
 	
 	PML4E* pml2 = PML4 + 0; // lower pml4 entry
 	pml2->P = 1;
 	pml2->RW = 1;
-	pml2->US = 0;
+	pml2->US = 1;
 	pml2->PDPE_addr = (uint64_t)PDP2 >> 12;
 	
 	PDPE* pdp1 = PDP1 + 511; // upper pdp entry
 	pdp1->P = 1;
 	pdp1->RW = 1;
-	pdp1->US = 0;
+	pdp1->US = 1;
 	pdp1->PS = 1;
 	pdp1->PDPE_addr = 0; // points to the start of the memory
 	
 	PDPE* pdp3 = PDP1 + 510; // kmalloc pdp entry
 	pdp3->P = 1;
 	pdp3->RW = 1;
-	pdp3->US = 0;
+	pdp3->US = 1;
 	pdp3->PDPE_addr = (uint64_t)PD >> 12;
 	
 	PDPE* pdp2 = PDP2 + 0; // lower pdp entry
 	pdp2->P = 1;
 	pdp2->RW = 1;
-	pdp2->US = 0;
+	pdp2->US = 1;
 	pdp2->PS = 1;
 	pdp2->PDPE_addr = 0;
 	
 	PDE* pd0 = PD + 0; // kmalloc pd entry
 	pd0->P = 1;
 	pd0->RW = 1;
-	pd0->US = 0;
+	pd0->US = 1;
 	pd0->PS = 1;
 	pd0->PDPE_addr = 0; // points to the start of the memory
 	
 	PDE* pd1 = PD + 1; // kmalloc pd entry 2nd
 	pd1->P = 1;
 	pd1->RW = 1;
-	pd1->US = 0;
+	pd1->US = 1;
 	pd1->PS = 1;
 	pd1->PDPE_addr = 0x200000 >> 12; // points to next region
 	
@@ -272,13 +203,13 @@ static void move_kbrk(PDE* pd, PTE* pt){
 		void* new_page_pt = get_phy_page(1, 2);
 		pd->P = 1;
 		pd->RW = 1;
-		pd->US = 0;
+		pd->US = 1;
 		pd->PS = 0;
 		pd->PDPE_addr = (uint64_t)new_page_pt>>12;
 		PTE* pt = new_page_pt;
 		pt->P = 1;
 		pt->RW = 1;
-		pt->US = 0;
+		pt->US = 1;
 		pt->PDPE_addr = (uint64_t)new_page>>12;
 	}
 }
@@ -324,4 +255,12 @@ void* kbrk(uint64_t size) {
 		_kbrk(4096);
 	}
 	return ret;
+}
+
+uint64_t translate_cr3(uint64_t pml4, uint64_t virtual_addr){
+	register uint64_t pdp = (((uint64_t*)(pml4 & 0xFFFFFFFFFF000))[(virtual_addr>>39) & 0b111111111]);
+	register uint64_t pd = (((uint64_t*)(pdp & 0xFFFFFFFFFF000))[(virtual_addr>>30) & 0b111111111]);
+	register uint64_t pt = (((uint64_t*)(pd & 0xFFFFFFFFFF000))[(virtual_addr>>21) & 0b111111111]);
+	register uint64_t pte = (((uint64_t*)(pt & 0xFFFFFFFFFF000))[(virtual_addr>>12) & 0b111111111]);
+	return (pte & 0xFFFFFFFFFF000) + (virtual_addr & 0xFFF);
 }

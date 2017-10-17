@@ -2,7 +2,7 @@
 #include <sys/kprintf.h>
 #include <stdarg.h>
 
-#define _SCREEN_BASE 0xb8000
+#define _SCREEN_BASE 0xFFFFFFFFC00B8000
 #define _SCREEN_LINES 25
 #define _SCREEN_COLOUMS 80
 

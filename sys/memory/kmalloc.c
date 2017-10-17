@@ -1,5 +1,4 @@
 #include <sys/kprintf.h>
-#include <sys/memory/kmalloc.h>
 #include <sys/memory/phy_page.h>
 #include <sys/defs.h>
 #include <sys/memory/kmalloc.h>
@@ -23,16 +22,6 @@ struct sbrk_return {
     size_t sizeGet;
 };
 typedef struct sbrk_return sbrk_return;
-
-static void* memcpy(void *dest, const void *src, size_t n){
-	char *pszDest =(char*)dest;
-	const char *pszSource =(char*)src;
-	while (n--){
-		*pszDest =*pszSource;
-		pszDest++; pszSource++;
-	}
-	return dest;
-}
 
 static inline sf_header* getFooter(sf_header* header){
 	return header+(header->block_size<<1)-1;

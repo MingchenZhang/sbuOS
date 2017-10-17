@@ -42,6 +42,16 @@ void memset(volatile void* addr, uint8_t value, uint64_t size){
 	for(uint8_t* end = (uint8_t*)addr + size; cursor < end; *(cursor++) = value);
 }
 
+void* memcpy(void *dest, const void *src, size_t n){
+	char *pszDest =(char*)dest;
+	const char *pszSource =(char*)src;
+	while (n--){
+		*pszDest =*pszSource;
+		pszDest++; pszSource++;
+	}
+	return dest;
+}
+
 void panic_halt() {
 	while(1);
 }

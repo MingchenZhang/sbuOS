@@ -28,24 +28,42 @@ lidt:
 ISR_HANDLER_WRAPER:
 	pushq %rdi
 	pushq %rsi
-	pushq %rbp
 	pushq %rbx
 	pushq %rdx
 	pushq %rcx
 	pushq %rax
-	pushq %rsp
 	pushq %r8
 	pushq %r9
+	pushq %rbp 
+	# when changed: also change those: two lines below, stack creation offset in thread creation, idt.h reg struct
+	cmpq $128, 72(%rsp) # if syscall
+	je ISR_HANDLER_WRAPER_context_switch
+	cmpq $32, 72(%rsp) # if timer
+	jne ISR_HANDLER_WRAPER_not_context_switch
+	movb $0x20, %al
+	outb %al, $0x20 # send EOI to PIC, to resume timer interrupt
+	# jmp ISR_HANDLER_WRAPER_not_context_switch # temporary disable timer context switch
+	ISR_HANDLER_WRAPER_context_switch:
+	call process_schedule
+	# start context switch
+	movq %rsp, %rdi
+	call save_previous_rsp
+	call load_current_cr3
+	movq %rax, %r9
+	call load_current_rsp
+	movq %rax, %rsp
+	movq %r9, %cr3
+	# context switched
+	ISR_HANDLER_WRAPER_not_context_switch:
 	movq %rsp,%rdi # set the first argument
 	call isr_handler
+	popq %rbp
 	popq %r9
 	popq %r8
-	popq %rsp
 	popq %rax
 	popq %rcx
 	popq %rdx
 	popq %rbx
-	popq %rbp
 	popq %rsi
 	popq %rdi
 	addq $16 ,%rsp
@@ -85,3 +103,4 @@ MAKE_ISR_HANDLER_ERR 30
 MAKE_ISR_HANDLER 31
 MAKE_ISR_HANDLER 32
 MAKE_ISR_HANDLER 33
+MAKE_ISR_HANDLER 128

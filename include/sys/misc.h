@@ -16,6 +16,7 @@ void update_topright_display();
 uint32_t get_random(uint32_t limit);
 
 void memset(volatile void* addr, uint8_t value, uint64_t size);
+void* memcpy(void *dest, const void *src, size_t n);
 
 void panic_halt();
 
