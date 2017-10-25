@@ -13,7 +13,7 @@
 #include <sys/thread/kthread.h>
 
 #define INITIAL_STACK_SIZE 4096
-#define RSP0_STACK_SIZE 0
+#define RSP0_STACK_SIZE 2048
 uint8_t initial_stack[INITIAL_STACK_SIZE]__attribute__((aligned(16)));
 uint8_t rsp0_stack[RSP0_STACK_SIZE]__attribute__((aligned(16))); // used as a clean stack to switch back to ring0
 uint32_t* loader_stack;
