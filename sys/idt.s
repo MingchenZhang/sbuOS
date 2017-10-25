@@ -36,27 +36,33 @@ ISR_HANDLER_WRAPER:
 	pushq %r9
 	pushq %rbp 
 	# when changed: also change those: two lines below, stack creation offset in thread creation, idt.h reg struct
+	movq %rsp,%rdi # set the first argument
+	call isr_handler
 	cmpq $128, 72(%rsp) # if syscall
 	je ISR_HANDLER_WRAPER_context_switch
 	cmpq $32, 72(%rsp) # if timer
-	jne ISR_HANDLER_WRAPER_not_context_switch
-	movb $0x20, %al
-	outb %al, $0x20 # send EOI to PIC, to resume timer interrupt
-	# jmp ISR_HANDLER_WRAPER_not_context_switch # temporary disable timer context switch
+	je ISR_HANDLER_WRAPER_context_switch
+	jmp ISR_HANDLER_WRAPER_not_context_switch
 	ISR_HANDLER_WRAPER_context_switch:
 	call process_schedule
 	# start context switch
-	movq %rsp, %rdi
+	movq 112(%rsp), %rdi
 	call save_previous_rsp
+	movq 88(%rsp), %rdi
+	call save_previous_rip
+	movq %rsp,%rdi # set the first argument
+	call save_previous_registers
+	
 	call load_current_cr3
 	movq %rax, %r9
 	call load_current_rsp
-	movq %rax, %rsp
-	movq %r9, %cr3
-	# context switched
-	ISR_HANDLER_WRAPER_not_context_switch:
+	movq %rax, 112(%rsp)
+	call load_current_rip
+	movq %rax, 88(%rsp)
 	movq %rsp,%rdi # set the first argument
-	call isr_handler
+	call load_previous_registers
+	movq %r9, %cr3 # context switch
+	ISR_HANDLER_WRAPER_not_context_switch:
 	popq %rbp
 	popq %r9
 	popq %r8

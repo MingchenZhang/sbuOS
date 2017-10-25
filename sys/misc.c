@@ -52,6 +52,22 @@ void* memcpy(void *dest, const void *src, size_t n){
 	return dest;
 }
 
+int streq(char* a, char* b){
+	for(;*a == *b; a++, b++){
+		if(*a == 0) return 1;
+	}
+	return 0;
+}
+
+int memeq(void* a1, void* b1, int64_t size){
+	unsigned char* a = a1;
+	unsigned char* b = b1;
+	for(;*a == *b; a++, b++, size--){
+		if(size == 1) return 1;
+	}
+	return 0;
+}
+
 void panic_halt() {
 	while(1);
 }

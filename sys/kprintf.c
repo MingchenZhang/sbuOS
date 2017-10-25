@@ -16,7 +16,7 @@ int cursor = 0;
 uint64_t topright_length=0;
 uint8_t color = 0b00001111;
 
-static inline void scroll_lines_up() {
+void scroll_lines_up() {
 	for(char* c = (char*)(_SCREEN_BASE + _SCREEN_COLOUMS*2);c < (char*)(_SCREEN_BASE + _SCREEN_COLOUMS*2*2 - (topright_length*2)); c++){
 		*(c-_SCREEN_COLOUMS*2) = *c;
 	}

@@ -7,7 +7,7 @@ void _start(void) {
 	int argc;
 	char** argv;
 	char** env;
-	__asm__("movq %%rbp, %0"
+	__asm__("movq %%rsp, %0"
 	  :"=rm"(argc_a)::);
 	argc_a += 2;
 	argc = *(argc_a);

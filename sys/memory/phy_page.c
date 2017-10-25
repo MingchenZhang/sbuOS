@@ -21,6 +21,8 @@ PML4E* kernel_page_table_PML4;
 
 #define KBRK_BASE_ADDRESS (void*)(0xFFFFFFFF80000000)
 
+#define MEMORY_CAP 0x6400000
+
 struct page_entry* find_free_page_entry(){
 	for(struct page_entry* cursor = page_entry_base; cursor < page_entry_end; cursor++){
 		if(cursor->used_by == 0){
@@ -48,6 +50,7 @@ void phy_page_init(uint32_t *modulep){
 	}
 	
 	uint64_t page_table_size = total_page_count * sizeof(struct page_entry);
+	uint64_t total_space = 0;
 	
 	int count = 0;
 	for(smap = (struct smap_t*)(modulep+2); smap < (struct smap_t*)((char*)modulep+modulep[1]+2*4); ++smap) {
@@ -77,7 +80,9 @@ void phy_page_init(uint32_t *modulep){
 				page_entry_end = page_entry_base + 1;
 				uint8_t* zone_cursor = (void*)(smap_base + 4096);
 				uint8_t* zone_end = (void*)(smap_base + smap_length);
-				for(;zone_cursor < zone_end; zone_cursor += 4096){
+				for(;zone_cursor < zone_end; zone_cursor += 4096, total_space += 4096){
+					// cap the memory used
+					if(total_space > MEMORY_CAP) break;
 					if((uint64_t)page_entry_end % 4096 == 0){
 						// more page is needed for page entry
 						struct page_entry* e = find_free_page_entry();
@@ -94,7 +99,9 @@ void phy_page_init(uint32_t *modulep){
 				}else{
 					uint8_t* zone_cursor = (void*)smap_base;
 					uint8_t* zone_end = (void*)(smap_base + smap_length);
-					for(;zone_cursor < zone_end; zone_cursor += 4096){
+					for(;zone_cursor < zone_end; zone_cursor += 4096, total_space += 4096){
+						// cap the memory used
+						if(total_space > MEMORY_CAP) break;
 						if((uint64_t)page_entry_end % 4096 == 0){
 							// more page is needed for page entry
 							struct page_entry* e = find_free_page_entry();
@@ -131,6 +138,18 @@ void kernel_page_table_init(){
 	PDPE* PDP2 = get_phy_page(1, 2);
 	PDE* PD = get_phy_page(1, 2);
 	kernel_malloc_pd = PD;
+	kernel_base_pd = get_phy_page(1, 2);
+	
+	// initialize kernel base PD page table
+	memset(kernel_base_pd, 0, 4096);
+	for(int i=0; i<512; i++){
+		PDE* _pd = kernel_base_pd + i;
+		_pd->P = 1;
+		_pd->RW = 1;
+		_pd->US = 1;
+		_pd->PS = 1;
+		_pd->PDPE_addr = (uint64_t)(0x200000 * i) >> 12;
+	}
 	
 	memset(PML4, 0, 4096);
 	memset(PDP1, 0, 4096);
@@ -140,54 +159,83 @@ void kernel_page_table_init(){
 	PML4E* pml1 = PML4 + 511; // upper pml4 entry
 	pml1->P = 1;
 	pml1->RW = 1;
-	pml1->US = 1;
+	pml1->US = 0;
 	pml1->PDPE_addr = (uint64_t)PDP1 >> 12;
 	
 	PML4E* pml2 = PML4 + 0; // lower pml4 entry
 	pml2->P = 1;
 	pml2->RW = 1;
-	pml2->US = 1;
+	pml2->US = 0;
 	pml2->PDPE_addr = (uint64_t)PDP2 >> 12;
 	
 	PDPE* pdp1 = PDP1 + 511; // upper pdp entry
 	pdp1->P = 1;
 	pdp1->RW = 1;
-	pdp1->US = 1;
-	pdp1->PS = 1;
-	pdp1->PDPE_addr = 0; // points to the start of the memory
+	pdp1->US = 0;
+	pdp1->PS = 0;
+	pdp1->PDPE_addr = (uint64_t)kernel_base_pd >> 12; // points to the start of the memory
 	
 	PDPE* pdp3 = PDP1 + 510; // kmalloc pdp entry
 	pdp3->P = 1;
 	pdp3->RW = 1;
-	pdp3->US = 1;
+	pdp3->US = 0;
 	pdp3->PDPE_addr = (uint64_t)PD >> 12;
 	
-	PDPE* pdp2 = PDP2 + 0; // lower pdp entry
+	PDPE* pdp2 = PDP2 + 0; // lower pdp entry // TODO: may create more for more than 1GB access
 	pdp2->P = 1;
 	pdp2->RW = 1;
-	pdp2->US = 1;
-	pdp2->PS = 1;
-	pdp2->PDPE_addr = 0;
+	pdp2->US = 0;
+	pdp2->PS = 0;
+	pdp2->PDPE_addr = (uint64_t)kernel_base_pd >> 12;
 	
 	PDE* pd0 = PD + 0; // kmalloc pd entry
 	pd0->P = 1;
 	pd0->RW = 1;
-	pd0->US = 1;
+	pd0->US = 0;
 	pd0->PS = 1;
 	pd0->PDPE_addr = 0; // points to the start of the memory
 	
 	PDE* pd1 = PD + 1; // kmalloc pd entry 2nd
 	pd1->P = 1;
 	pd1->RW = 1;
-	pd1->US = 1;
+	pd1->US = 0;
 	pd1->PS = 1;
 	pd1->PDPE_addr = 0x200000 >> 12; // points to next region
 	
-	uint64_t kernel_page_table_cr3 = (uint64_t)PML4;
 	kernel_page_table_PML4 = PML4;
 	
-	// switch to the new page table
-	__asm__ volatile("movq %0, %%cr3"::"r"((uint64_t)kernel_page_table_cr3));
+	// // switch to the new page table
+	// kprintf("showing old cr3\n");
+	// uint64_t old_cr3;
+	// __asm__ volatile("movq %%cr3, %0;":"=r"(old_cr3));
+	// kprintf("0: %p, ", old_cr3);
+	// uint64_t _pdp1 = (((uint64_t*)((uint64_t)old_cr3 & 0xFFFFFFFFFF000))[511]);
+	// uint64_t _pd1 = (((uint64_t*)(_pdp1 & 0xFFFFFFFFFF000))[511]);
+	// uint64_t _pt1 = (((uint64_t*)(_pd1 & 0xFFFFFFFFFF000))[1]);
+	// kprintf("1: %p, ",  _pdp1);
+	// kprintf("2: %p, ", _pd1);
+	// kprintf("3: %p, ", _pt1);
+	// kprintf("applying new cr3. ");
+	// kprintf("0: %p, ", PML4);
+	// _pdp1 = (((uint64_t*)((uint64_t)PML4 & 0xFFFFFFFFFF000))[511]);
+	// _pd1 = (((uint64_t*)(_pdp1 & 0xFFFFFFFFFF000))[511]);
+	// _pt1 = (((uint64_t*)(_pd1 & 0xFFFFFFFFFF000))[1]);
+	// kprintf("1: %p, ",  _pdp1);
+	// kprintf("2: %p, ", _pd1);
+	// kprintf("3: %p, ", _pt1);
+	// uint64_t rsp;
+	// __asm__ volatile("movq %%rsp, %0;":"=r"(rsp));
+	// kprintf("rsp: %p, ",  rsp);
+	__asm__ volatile("movq %0, %%cr3"::"r"((uint64_t)PML4));
+	// void* c1 = (void*)0x1373000;
+	// void* c2 = (void*)0x1374000;
+	// void* c3 = (void*)0x1375000;
+	// memcpy(c1, (void*)0x3f000, 4096);
+	// memcpy(c2, (void*)0x40000, 4096);
+	// memcpy(c3, (void*)0x41000, 4096);
+	// __asm__ volatile("movq %0, %%cr3"::"r"(((uint64_t)c1)&0xfffffffffffff000));
+	// *((uint8_t*)0xFFFFFFFFC00B8000) = 'D';
+	// __asm__ volatile("hlt;");
 	kprintf("kernel page table initialized\n");
 }
 
@@ -203,13 +251,13 @@ static void move_kbrk(PDE* pd, PTE* pt){
 		void* new_page_pt = get_phy_page(1, 2);
 		pd->P = 1;
 		pd->RW = 1;
-		pd->US = 1;
+		pd->US = 0;
 		pd->PS = 0;
 		pd->PDPE_addr = (uint64_t)new_page_pt>>12;
 		PTE* pt = new_page_pt;
 		pt->P = 1;
 		pt->RW = 1;
-		pt->US = 1;
+		pt->US = 0;
 		pt->PDPE_addr = (uint64_t)new_page>>12;
 	}
 }
@@ -258,6 +306,7 @@ void* kbrk(uint64_t size) {
 }
 
 uint64_t translate_cr3(uint64_t pml4, uint64_t virtual_addr){
+	// TODO: add early terminated page table support
 	register uint64_t pdp = (((uint64_t*)(pml4 & 0xFFFFFFFFFF000))[(virtual_addr>>39) & 0b111111111]);
 	register uint64_t pd = (((uint64_t*)(pdp & 0xFFFFFFFFFF000))[(virtual_addr>>30) & 0b111111111]);
 	register uint64_t pt = (((uint64_t*)(pd & 0xFFFFFFFFFF000))[(virtual_addr>>21) & 0b111111111]);

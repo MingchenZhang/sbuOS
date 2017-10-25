@@ -7,12 +7,15 @@
 #include <sys/misc.h>
 #include <sys/config.h>
 #include <sys/pci.h>
+#include <sys/elf64.h>
 #include <sys/memory/phy_page.h>
 #include <sys/memory/kmalloc.h>
 #include <sys/thread/kthread.h>
 
-#define INITIAL_STACK_SIZE 8192
+#define INITIAL_STACK_SIZE 4096
+#define RSP0_STACK_SIZE 0
 uint8_t initial_stack[INITIAL_STACK_SIZE]__attribute__((aligned(16)));
+uint8_t rsp0_stack[RSP0_STACK_SIZE]__attribute__((aligned(16))); // used as a clean stack to switch back to ring0
 uint32_t* loader_stack;
 extern char kernmem, physbase;
 
@@ -33,7 +36,7 @@ int check_bytes(void* ptr, uint8_t value, uint64_t size){
 }
 
 void test_func_1(){
-	for(uint64_t i=0; ;i++){
+	for(long long i=0; ;i++){
 		if(i%0x20000000 == 0){
 			// kprintf("test_func_1 reach %x\n", i);
 			__asm__ volatile (
@@ -44,7 +47,7 @@ void test_func_1(){
 }
 
 void test_func_2(){
-	for(uint64_t i=0; ;i++){
+	for(long long i=0; ;i++){
 		if(i%0x17000000 == 0){
 			// kprintf("test_func_2 reach %x\n", i);
 			__asm__ volatile (
@@ -55,7 +58,7 @@ void test_func_2(){
 }
 
 void test_func_3(){
-	for(uint64_t i=0; ;i++){
+	for(long long i=0; ;i++){
 		if(i%0x15000000 == 0){
 			// kprintf("test_func_3 reach %x\n", i);
 			__asm__ volatile (
@@ -80,6 +83,10 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 	kprintf("physfree %p\n", (uint64_t)physfree);
 	kprintf("physbase %p\n", (uint64_t)physbase);
 	kprintf("tarfs in [%p:%p]\n", &_binary_tarfs_start, &_binary_tarfs_end);
+	
+	uint64_t cr0 = 0;
+	__asm__ volatile("movq %%cr0, %0;":"=r"((uint64_t)cr0));
+	kprintf("cr0: %p\n", cr0);
 
 	init_idt();
 	// init_pic(); // it seems pic has been configured
@@ -87,12 +94,10 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 	init_timer(PIT_FREQUENCY);
 
 	// kprintf("screen cleared\n");
-
-	// enable the interrupt
-	__asm__ volatile("sti;");
 	
 	phy_page_init(modulep);
 	kernel_page_table_init();
+	init_tarfs(&_binary_tarfs_start, &_binary_tarfs_end);
 	
 	// for(int i=0; i<512; i++){
 		// kbrk(4096);
@@ -117,18 +122,57 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 	// *num2 = 67867;
 	// kprintf("num1 = %d, at %p\n", *num2, num2);
 	
-	test_spawn_process(&test_func_1, (uint64_t)test_func_2-(uint64_t)test_func_1);
-	test_spawn_process(&test_func_2, (uint64_t)test_func_3-(uint64_t)test_func_2);
-	test_spawn_process(&test_func_3, (uint64_t)test_func-(uint64_t)test_func_3);
+	// test_spawn_process(&test_func_1, (uint64_t)test_func_2-(uint64_t)test_func_1);
+	// test_spawn_process(&test_func_2, (uint64_t)test_func_3-(uint64_t)test_func_2);
+	// test_spawn_process(&test_func_3, (uint64_t)test_func-(uint64_t)test_func_3);
+	// kprintf("threads created\n");
+	// __asm__ volatile ("int $0x80;");
+	
+	// char* buffer = (void*)0x1000000;
+	// int64_t readed = tarfs_read("bin/cat", buffer, 512);
+	// if(readed >=0 ){
+		// kprintf("tarfs_read reads %d bytes\n", readed);
+		// while(1) __asm__("hlt;");
+	// }else{
+		// kprintf("tarfs_read failed\n");
+	// }
+	
+	program_section* result1;
+	if(!(result1 = read_elf_tarfs("bin/test"))) {
+		kprintf("read_elf_tarfs failed\n");
+		while(1) __asm__("hlt;");
+	}
+	test_spawn_process_elf(result1, "bin/test");
+	program_section* result2;
+	if(!(result2 = read_elf_tarfs("bin/test2"))) {
+		kprintf("read_elf_tarfs failed\n");
+		while(1) __asm__("hlt;");
+	}
+	test_spawn_process_elf(result2, "bin/test2");
+	program_section* result3;
+	if(!(result3 = read_elf_tarfs("bin/test3"))) {
+		kprintf("read_elf_tarfs failed\n");
+		while(1) __asm__("hlt;");
+	}
+	test_spawn_process_elf(result3, "bin/test3");
 	kprintf("threads created\n");
-	__asm__ volatile ("int $0x80;");
 	
 	// kprintf("init pci\n");
 	// init_pci();
 	// kprintf("init pci done\n");
 	
+	// add_kernel_thread_to_process_list(); // discarded because of ring support
 	
-
+	// enable the interrupt
+	// __asm__ volatile("sti;");
+	
+	set_tss_rsp(rsp0_stack+RSP0_STACK_SIZE);
+	
+	__asm__ volatile (
+		"movq $255, %rdi;"
+		"int $0x80;"
+		); // switch to other process
+	
 	while(1) __asm__("hlt;");
 }
 

@@ -136,7 +136,7 @@ void init_idt(){
 	idt_set_entry( 31, (uint64_t)isr31 , 0x08, 0x8E);
 	idt_set_entry( 32, (uint64_t)isr32 , 0x08, 0x8E);
 	idt_set_entry( 33, (uint64_t)isr33 , 0x08, 0x8E);
-	idt_set_entry( 128, (uint64_t)isr128 , 0x08, 0x8E);
+	idt_set_entry( 128, (uint64_t)isr128 , 0x08, 0xEE);
 	// apply the changes
 	lidt(&idt_ptr);
 }
@@ -147,8 +147,7 @@ static inline void test_tick_handle(){
 	}
 }
 
-void isr_handler(handler_reg reg){
-	// kprintf("int: %d\n", reg.int_num);
+void isr_handler(handler_reg volatile reg){
 	if(reg.int_num == IRQ0){ // timer interrupt (from PIT)
 		pic_tick_count++;
 		test_tick_handle();
@@ -157,22 +156,31 @@ void isr_handler(handler_reg reg){
 		uint8_t c = asm_inb(0x60);
 		// kprintf("Keyboard scan code: %x\n", c);
 		handle_keyboard_scan_code(c);
-	}else if(reg.int_num == 128){
-		// kprintf("syscalled\n");
+	}else if(reg.int_num == 0x80){
+		// syscall return must be written back to reg.rax
 		if(reg.rdi == 100){
 			kprintf("syscall 1\n");
-		}
-		if(reg.rdi == 101){
+		}else if(reg.rdi == 101){
 			kprintf("syscall 2\n");
-		}
-		if(reg.rdi == 102){
+		}else if(reg.rdi == 102){
 			kprintf("syscall 3\n");
+		}else if(reg.rdi == 255){
+			kprintf("switch to ring 3 and enable interrupt up on return\n");
+			reg.cs = USER_CODE_SEGMENT_SELECTOR;
+			reg.ss = USER_STACK_SEGMENT_SELECTOR;
+			reg.eflags = 0x200216;
 		}
+	}else if(reg.int_num == 13){
+		kprintf("General Protection fault occurred. Fault num: %d\n", reg.err_num);
+		while(1); // halt the system to figure out what's wrong
+	}else if(reg.int_num == 14){
+		kprintf("Page Fault occurred. Fault num: %d\n", reg.err_num);
+		while(1); // halt the system to figure out what's wrong
 	}else{
 		kprintf("Unhandled interrupt on vector: %d\n", reg.int_num);
 		while(1); // halt the system to figure out what's wrong
 	}
-	if(reg.int_num >= 33 && reg.int_num < 48){ // a PIC interrupt, except timer (timer EOI is send before the context switch)
+	if(reg.int_num >= 32 && reg.int_num < 48){ // a PIC interrupt
 		if (reg.int_num >= 40){ // it came from PIC
 			asm_outb(0xA0, 0x20); // Send EOI to slave.
 		}

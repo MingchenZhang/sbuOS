@@ -76,6 +76,7 @@ typedef struct PTE{
 }__attribute__((__packed__)) PTE;
 
 PDE* kernel_malloc_pd;
+PDE* kernel_base_pd;
 
 void phy_page_init(uint32_t *modulep);
 

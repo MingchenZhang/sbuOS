@@ -1,16 +1,18 @@
 #ifndef _ELF64_H
 #define _ELF64_H
 
+#include <sys/defs.h>
+
 #define EI_NIDENT 16
 
-typedef Elf64_Addr   uint64_t;
-typedef Elf64_Half   uint16_t;
-typedef Elf64_Lword  uint64_t;
-typedef Elf64_Off    uint64_t;
-typedef Elf64_Sword  uint32_t;
-typedef Elf64_Sxword uint64_t;
-typedef Elf64_Word   uint32_t;
-typedef Elf64_Xword  uint64_t;
+#define Elf64_Addr   uint64_t
+#define Elf64_Half   uint16_t
+#define Elf64_Lword  uint64_t
+#define Elf64_Off    uint64_t
+#define Elf64_Sword  uint32_t
+#define Elf64_Sxword uint64_t
+#define Elf64_Word   uint32_t
+#define Elf64_Xword  uint64_t
 
 typedef struct {
   unsigned char e_ident[EI_NIDENT];
@@ -39,5 +41,15 @@ typedef struct {
   Elf64_Xword   p_memsz;
   Elf64_Xword   p_align;
 } Elf64_Phdr;
+
+typedef struct program_section{
+	uint64_t file_offset;
+	uint64_t memory_offset;
+	uint64_t size;
+	uint64_t entry_point;
+	struct program_section* next;
+} program_section;
+
+program_section* read_elf_tarfs(char* file_path);
 
 #endif

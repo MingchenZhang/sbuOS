@@ -17,6 +17,8 @@ uint32_t get_random(uint32_t limit);
 
 void memset(volatile void* addr, uint8_t value, uint64_t size);
 void* memcpy(void *dest, const void *src, size_t n);
+int streq(char* a, char* b);
+int memeq(void* a1, void* b1, int64_t size);
 
 void panic_halt();
 
