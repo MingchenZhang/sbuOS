@@ -12,4 +12,6 @@ void clear_screen();
 
 void print_topright(const char* str, uint8_t color);
 
+void print_terminal_input_line(char* src, int length);
+
 #endif

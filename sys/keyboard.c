@@ -2,20 +2,21 @@
 #include <sys/kprintf.h>
 #include <sys/keyboard.h>
 #include <sys/misc.h>
+#include <sys/terminal.h>
 
 int shift = 0;
 int ctrl = 0;
 
 uint8_t ascii_map[256] = {
 	0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0,
-	'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s',
+	'q','w','e','r','t','y','u','i','o','p','[',']','\n',0,'a','s',
 	'd','f','g','h','j','k','l',';','\'','`',0,'\\','z','x','c','v',
 	'b','n','m',',','.','/',0,0,0,' ',0,0,0,0,0,0,
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x8,0,
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -57,6 +58,7 @@ void handle_keyboard_scan_code(uint8_t code){
 				last_key_pressed[0] = ascii;
 				last_key_pressed[1] = 0;
 				update_topright_display();
+				terminal_input_ascii(ascii);
 			}else if(!is_release && ctrl){
 				// kprintf("key press: ^%c\n", ascii);
 				last_key_pressed[0] = '^';
@@ -84,10 +86,9 @@ char shiftConvert(uint8_t code){
 	return asc_array[code];
 }
 
-
-
 int _isAlphabet(uint8_t code){
 	if (code>=97 && code <=122)
 		return 1;
 	return 0;	
 }
+

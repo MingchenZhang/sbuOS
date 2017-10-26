@@ -5,6 +5,9 @@
 #include <sys/config.h>
 #include <sys/keyboard.h>
 #include <sys/thread/kthread.h>
+#include <sys/timer.h>
+#include <sys/config.h>
+#include <sys/memory/phy_page.h>
 
 #define IRQ0 32
 #define IRQ1 33
@@ -142,6 +145,7 @@ void init_idt(){
 }
 
 static inline void test_tick_handle(){
+	tick_timer_update();
 	if(pic_tick_count%PIT_FREQUENCY == 0){
 		update_topright_display();
 	}
@@ -149,6 +153,7 @@ static inline void test_tick_handle(){
 
 void isr_handler(handler_reg volatile reg){
 	if(reg.int_num == IRQ0){ // timer interrupt (from PIT)
+		__asm__ volatile("movq %0, %%cr3"::"r"((uint64_t)kernel_page_table_PML4)); // return to kernel page table for complex op
 		pic_tick_count++;
 		test_tick_handle();
 	}else if(reg.int_num == IRQ1){ // keyboard interrupt
@@ -157,6 +162,7 @@ void isr_handler(handler_reg volatile reg){
 		// kprintf("Keyboard scan code: %x\n", c);
 		handle_keyboard_scan_code(c);
 	}else if(reg.int_num == 0x80){
+		__asm__ volatile("movq %0, %%cr3"::"r"((uint64_t)kernel_page_table_PML4)); // return to kernel page table for complex op
 		// syscall return must be written back to reg.rax
 		if(reg.rdi == 100){
 			kprintf("syscall 1\n");
@@ -164,6 +170,11 @@ void isr_handler(handler_reg volatile reg){
 			kprintf("syscall 2\n");
 		}else if(reg.rdi == 102){
 			kprintf("syscall 3\n");
+		}else if(reg.rdi == 254){
+			// test_wait
+			uint64_t ticks = reg.rsi * PIT_FREQUENCY;
+			register_to_be_waken(current_process, ticks);
+			current_process->on_hold = 1;
 		}else if(reg.rdi == 255){
 			kprintf("switch to ring 3 and enable interrupt up on return\n");
 			reg.cs = USER_CODE_SEGMENT_SELECTOR;

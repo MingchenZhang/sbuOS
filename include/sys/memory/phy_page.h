@@ -78,6 +78,8 @@ typedef struct PTE{
 PDE* kernel_malloc_pd;
 PDE* kernel_base_pd;
 
+extern PML4E* kernel_page_table_PML4;
+
 void phy_page_init(uint32_t *modulep);
 
 void* get_phy_page(uint32_t num, char used_by);

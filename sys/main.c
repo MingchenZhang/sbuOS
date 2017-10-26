@@ -11,6 +11,7 @@
 #include <sys/memory/phy_page.h>
 #include <sys/memory/kmalloc.h>
 #include <sys/thread/kthread.h>
+#include <sys/terminal.h>
 
 #define INITIAL_STACK_SIZE 4096
 #define RSP0_STACK_SIZE 2048
@@ -35,46 +36,6 @@ int check_bytes(void* ptr, uint8_t value, uint64_t size){
 	return 1;
 }
 
-void test_func_1(){
-	for(long long i=0; ;i++){
-		if(i%0x20000000 == 0){
-			// kprintf("test_func_1 reach %x\n", i);
-			__asm__ volatile (
-			"movq $100, %rdi;"
-			"int $0x80;");
-		}
-	}
-}
-
-void test_func_2(){
-	for(long long i=0; ;i++){
-		if(i%0x17000000 == 0){
-			// kprintf("test_func_2 reach %x\n", i);
-			__asm__ volatile (
-			"movq $101, %rdi;"
-			"int $0x80;");
-		}
-	}
-}
-
-void test_func_3(){
-	for(long long i=0; ;i++){
-		if(i%0x15000000 == 0){
-			// kprintf("test_func_3 reach %x\n", i);
-			__asm__ volatile (
-			"movq $102, %rdi;"
-			"int $0x80;");
-		}
-	}
-}
-
-void test_func(){
-	int volatile a = 43;
-	a+=5;
-	__asm__ volatile ("int $1;");
-	kprintf("", a);
-}
-
 void start(uint32_t *modulep, void *physbase, void *physfree)
 {
 	
@@ -97,36 +58,8 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 	
 	phy_page_init(modulep);
 	kernel_page_table_init();
+	init_terminal();
 	init_tarfs(&_binary_tarfs_start, &_binary_tarfs_end);
-	
-	// for(int i=0; i<512; i++){
-		// kbrk(4096);
-	// }
-	// void* point0 = kbrk(4096);
-	// memset(point0, 0b10101010, 4096);
-	// void* point1 = kbrk(4096);
-	// memset(point1, 0b01010101, 4096);
-	// void* point2 = kbrk(4096);
-	// memset(point2, 0b10101010, 4096);
-	// kprintf("1:%p, 2:%p, 3:%p\n", point0, point1, point2);
-	// if(!check_bytes(point0, 0b10101010, 4096)) kprintf("Wrong !!\n");
-	// if(!check_bytes(point1, 0b01010101, 4096)) kprintf("Wrong !!\n");
-	// if(!check_bytes(point2, 0b10101010, 4096)) kprintf("Wrong !!\n");
-	// kprintf("point2: %x\n", *(uint64_t*)point0);
-	
-	// int* num1 = sf_malloc(4000);
-	// *num1 = 3432;
-	// kprintf("num1 = %d, at %p\n", *num1, num1);
-	// sf_free(num1);
-	// int* num2 = sf_malloc(4);
-	// *num2 = 67867;
-	// kprintf("num1 = %d, at %p\n", *num2, num2);
-	
-	// test_spawn_process(&test_func_1, (uint64_t)test_func_2-(uint64_t)test_func_1);
-	// test_spawn_process(&test_func_2, (uint64_t)test_func_3-(uint64_t)test_func_2);
-	// test_spawn_process(&test_func_3, (uint64_t)test_func-(uint64_t)test_func_3);
-	// kprintf("threads created\n");
-	// __asm__ volatile ("int $0x80;");
 	
 	// char* buffer = (void*)0x1000000;
 	// int64_t readed = tarfs_read("bin/cat", buffer, 512);
@@ -137,6 +70,14 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 		// kprintf("tarfs_read failed\n");
 	// }
 	
+	// while(1) __asm__("hlt;");
+	
+	program_section* result0;
+	if(!(result0 = read_elf_tarfs("bin/test"))) {
+		kprintf("read_elf_tarfs failed\n");
+		while(1) __asm__("hlt;");
+	}
+	test_spawn_process_elf(result0, "bin/init");
 	program_section* result1;
 	if(!(result1 = read_elf_tarfs("bin/test"))) {
 		kprintf("read_elf_tarfs failed\n");

@@ -3,7 +3,7 @@
 #include <stdarg.h>
 
 #define _SCREEN_BASE 0xFFFFFFFFC00B8000
-#define _SCREEN_LINES 25
+#define _SCREEN_LINES 24
 #define _SCREEN_COLOUMS 80
 
 void print_func(char c);
@@ -50,6 +50,14 @@ void print_topright(const char* str, uint8_t color){
 		cursor++;	
 	}
 	cursor = old_cursor;
+}
+
+void print_terminal_input_line(char* src, int length){
+	char* base = (char*)(_SCREEN_BASE + 80*24*2);
+	for(int i=0; i<_SCREEN_COLOUMS; i++){
+		if(i<length) base[i*2] = src[i];
+		else base[i*2] = 0;
+	}
 }
 
 void print_func(char c) {

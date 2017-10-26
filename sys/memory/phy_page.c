@@ -128,7 +128,7 @@ void* get_phy_page(uint32_t num, char used_by){
 	}
 	page_entry* new_page = find_free_page_entry();
 	new_page->used_by = used_by;
-	kprintf("get_phy_page: allocated one at: %p\n", new_page->base);
+	// kprintf("get_phy_page: allocated one at: %p\n", new_page->base);
 	return new_page->base;
 }
 
@@ -263,6 +263,7 @@ static void move_kbrk(PDE* pd, PTE* pt){
 }
 
 static void* _kbrk(uint64_t size){
+	// kprintf("DEBUG: _kbrk %d\n", size);
 	if(size > 4096){
 		kprintf("PANIC: _kbrk not yet support multiple pages\n");
 		panic_halt();
