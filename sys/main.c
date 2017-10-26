@@ -73,7 +73,7 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 	// while(1) __asm__("hlt;");
 	
 	program_section* result0;
-	if(!(result0 = read_elf_tarfs("bin/test"))) {
+	if(!(result0 = read_elf_tarfs("bin/init"))) {
 		kprintf("read_elf_tarfs failed\n");
 		while(1) __asm__("hlt;");
 	}
