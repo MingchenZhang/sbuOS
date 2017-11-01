@@ -1,0 +1,9 @@
+rootfs/boot/large-file-padding
+kernel
+obj/
+rootfs/bin/
+rootfs/boot/kernel/kernel
+rootfs/lib/
+shengliu.img
+shengliu.iso
+
