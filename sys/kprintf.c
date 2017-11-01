@@ -184,7 +184,6 @@ void kprintfa(char* dest, int size, const char *format, ...) {
     }
 }
 
-
 void print_num(int input, void (*print_func)(char)) {
     // max 2,147,483,647
     int is_negative = input >> (sizeof(input)*8-1);

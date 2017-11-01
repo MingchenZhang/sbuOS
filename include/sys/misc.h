@@ -20,7 +20,10 @@ void* memcpy(void *dest, const void *src, size_t n);
 int streq(char* a, char* b);
 int memeq(void* a1, void* b1, int64_t size);
 
+uint64_t math_min(uint64_t first, ...);
+
 void panic_halt();
+void assert(int boolean, char* error);
 
 void debug_wait();
 

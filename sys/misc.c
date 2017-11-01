@@ -2,6 +2,7 @@
 #include <sys/kprintf.h>
 #include <sys/config.h>
 #include <sys/misc.h>
+#include <stdarg.h>
 
 volatile uint64_t pic_tick_count = 0;
 uint8_t last_key_pressed[5] = {0,0,0,0,0};
@@ -68,8 +69,27 @@ int memeq(void* a1, void* b1, int64_t size){
 	return 0;
 }
 
+uint64_t math_min(uint64_t first, ...){
+	va_list ap;
+    va_start(ap, first);
+	uint64_t min = first;
+	for(;;){
+		uint64_t n = va_arg(ap, uint64_t);
+		if(n == (uint64_t)-1) break;
+		if(n<min) min = n;
+	}
+	return min;
+}
+
 void panic_halt() {
 	while(1);
+}
+
+void assert(int boolean, char* error){
+	if(!boolean){
+		kprintf(error);
+		while(1);
+	}
 }
 
 void debug_wait(){

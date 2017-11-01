@@ -36,7 +36,7 @@ wp2: project
 
 wp3: project
 
-$(USER).iso: kernel
+$(USER).iso: kernel $(ROOTBOOT)/large-file-padding
 	cp kernel $(ROOTBOOT)/kernel/kernel
 	mkisofs -r -no-emul-boot -input-charset utf-8 -b boot/cdboot -o $@ $(ROOTFS)/
 

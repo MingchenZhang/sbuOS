@@ -37,13 +37,16 @@ void tick_timer_update(){
 		first_waiter = cursor->next;
 		sf_free(cursor);
 		if(!first_waiter) return;
-	}
+		cursor = first_waiter;
+	}// TODO: not yet fully exhaust the list
 	while(cursor->next){
 		if(cursor->next->ticks_to_wake-- == 0){
 			cursor->next->proc->on_hold = 0;
-			sf_free(cursor->next);
-			cursor->next = cursor->next->next;
+			waiter* to_be_removed = cursor->next;
+			cursor->next = to_be_removed->next;
+			sf_free(to_be_removed);
+		}else{
+			cursor = cursor->next;
 		}
-		cursor = cursor->next;
 	}
 }

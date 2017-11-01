@@ -1,7 +1,13 @@
+
+
 #ifndef _PHY_PAGE_H
 #define _PHY_PAGE_H
 
+typedef struct page_entry page_entry;
+typedef struct page_use_record page_use_record; 
+
 #include <sys/defs.h>
+#include <sys/thread/kthread.h>
 
 typedef struct CR3{
 	uint64_t reserve1:  3;
@@ -75,6 +81,22 @@ typedef struct PTE{
 	uint64_t NX:        1;
 }__attribute__((__packed__)) PTE;
 
+typedef struct page_use_record{
+	char type; // 0: undefined, 1:process paging(points to m_map)
+	uint64_t pt;
+	struct page_use_record* next;
+} page_use_record;
+
+typedef struct page_entry{
+	void* base;
+	char used_by; // 0: not used, 1: page entry, 2: kernel page table, 3: user process
+	page_use_record* use_record;
+} page_entry;
+
+typedef struct kmalloc_usage_entry{
+	void* phy_addr;
+} kmalloc_usage_entry;
+
 PDE* kernel_malloc_pd;
 PDE* kernel_base_pd;
 
@@ -83,11 +105,15 @@ extern PML4E* kernel_page_table_PML4;
 void phy_page_init(uint32_t *modulep);
 
 void* get_phy_page(uint32_t num, char used_by);
+page_entry* get_phy_page_for_program(Process* proc, m_map* map);
+void dup_page_for_program(page_entry* page, m_map* map);
+void free_page_for_program(page_entry* page, m_map* map);
 
 void kernel_page_table_init();
 
 void* kbrk(uint64_t size);
 
 uint64_t translate_cr3(uint64_t pml4, uint64_t virtual_addr);
+int set_pte_rw(uint64_t pml4, uint64_t virtual_addr, char rw);
 
 #endif

@@ -37,6 +37,8 @@ ISR_HANDLER_WRAPER:
 	pushq %rbp 
 	# when changed: also change those: two lines below, stack creation offset in thread creation, idt.h reg struct
 	movq %rsp,%rdi # set the first argument
+	call save_current_state # pre save current process state in case isr_handler needs them
+	movq %rsp,%rdi # set the first argument
 	call isr_handler
 	cmpq $128, 72(%rsp) # if syscall
 	je ISR_HANDLER_WRAPER_context_switch

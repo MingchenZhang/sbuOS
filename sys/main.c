@@ -72,31 +72,67 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 	
 	// while(1) __asm__("hlt;");
 	
-	program_section* result0;
-	if(!(result0 = read_elf_tarfs("bin/init"))) {
-		kprintf("read_elf_tarfs failed\n");
-		while(1) __asm__("hlt;");
+	{
+		program_section* result;
+		if(!(result = read_elf_tarfs("bin/init"))) {
+			kprintf("read_elf_tarfs failed\n");
+			while(1) __asm__("hlt;");
+		}
+		spawn_process(result, "bin/init");
 	}
-	test_spawn_process_elf(result0, "bin/init");
-	program_section* result1;
-	if(!(result1 = read_elf_tarfs("bin/test"))) {
-		kprintf("read_elf_tarfs failed\n");
-		while(1) __asm__("hlt;");
-	}
-	test_spawn_process_elf(result1, "bin/test");
-	program_section* result2;
-	if(!(result2 = read_elf_tarfs("bin/test2"))) {
-		kprintf("read_elf_tarfs failed\n");
-		while(1) __asm__("hlt;");
-	}
-	test_spawn_process_elf(result2, "bin/test2");
-	program_section* result3;
-	if(!(result3 = read_elf_tarfs("bin/test3"))) {
-		kprintf("read_elf_tarfs failed\n");
-		while(1) __asm__("hlt;");
-	}
-	test_spawn_process_elf(result3, "bin/test3");
-	kprintf("threads created\n");
+	
+	// program_section* result1;
+	// if(!(result1 = read_elf_tarfs("bin/test"))) {
+		// kprintf("read_elf_tarfs failed\n");
+		// while(1) __asm__("hlt;");
+	// }
+	// spawn_process(result1, "bin/test");
+	
+	// program_section* result2;
+	// if(!(result2 = read_elf_tarfs("bin/test2"))) {
+		// kprintf("read_elf_tarfs failed\n");
+		// while(1) __asm__("hlt;");
+	// }
+	// spawn_process(result2, "bin/test2");
+	
+	// {
+		// program_section* result;
+		// if(!(result = read_elf_tarfs("bin/test3"))) {
+			// kprintf("read_elf_tarfs failed\n");
+			// while(1) __asm__("hlt;");
+		// }
+		// spawn_process(result, "bin/test3");
+	// }
+	
+	// {
+		// program_section* result;
+		// if(!(result = read_elf_tarfs("bin/test3"))) {
+			// kprintf("read_elf_tarfs failed\n");
+			// while(1) __asm__("hlt;");
+		// }
+		// spawn_process(result, "bin/test3");
+	// }
+	
+	// {
+		// program_section* result;
+		// if(!(result = read_elf_tarfs("bin/stack_test"))) {
+			// kprintf("read_elf_tarfs failed\n");
+			// while(1) __asm__("hlt;");
+		// }
+		// spawn_process(result, "bin/stack_test");
+	// }
+	
+	{
+		char* path = "bin/fork_test";
+		program_section* result;
+		if(!(result = read_elf_tarfs(path))) {
+			kprintf("read_elf_tarfs failed\n");
+			while(1) __asm__("hlt;");
+		}
+		spawn_process(result, path);
+	}	
+	
+	// kprintf("threads created\n");
 	
 	// kprintf("init pci\n");
 	// init_pci();

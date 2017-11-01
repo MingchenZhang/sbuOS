@@ -12,6 +12,13 @@ struct handler_reg{
 } __attribute__((packed)); 
 typedef struct handler_reg handler_reg;
 
+// argument order: rdi, rsi, rdx, rcx, r8, r9
+
+typedef struct reg_saved reg_saved;
+struct reg_saved{
+	uint64_t rbp, r9, r8, rax, rcx, rdx, rbx, rsi, rdi;
+};
+
 void isr_handler(handler_reg);
 
 #endif

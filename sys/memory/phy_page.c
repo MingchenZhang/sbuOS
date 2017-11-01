@@ -1,15 +1,8 @@
 #include <sys/memory/phy_page.h>
+#include <sys/memory/kmalloc.h>
+#include <sys/thread/kthread.h>
 #include <sys/misc.h>
 #include <sys/kprintf.h>
-
-typedef struct page_entry{
-	void* base;
-	char used_by; // 0: not used, 1: page entry, 2: kernel page table, 3: user process
-} page_entry;
-
-typedef struct kmalloc_usage_entry{
-	void* phy_addr;
-} kmalloc_usage_entry;
 
 
 
@@ -21,7 +14,7 @@ PML4E* kernel_page_table_PML4;
 
 #define KBRK_BASE_ADDRESS (void*)(0xFFFFFFFF80000000)
 
-#define MEMORY_CAP 0x6400000
+#define MEMORY_CAP 0x6400000//+0xF000000000000000
 
 struct page_entry* find_free_page_entry(){
 	for(struct page_entry* cursor = page_entry_base; cursor < page_entry_end; cursor++){
@@ -130,6 +123,56 @@ void* get_phy_page(uint32_t num, char used_by){
 	new_page->used_by = used_by;
 	// kprintf("get_phy_page: allocated one at: %p\n", new_page->base);
 	return new_page->base;
+}
+
+page_entry* get_phy_page_for_program(Process* proc, m_map* map){
+	page_entry* new_page = find_free_page_entry();
+	new_page->used_by = 3;
+	new_page->use_record = sf_malloc(sizeof(page_use_record));
+	memset(new_page->use_record, 0, sizeof(page_use_record));
+	new_page->use_record->type = 1;
+	new_page->use_record->pt = (uint64_t)map;
+	return new_page;
+}
+
+void dup_page_for_program(page_entry* page, m_map* map){
+	assert(page->used_by == 3, "dup_page_for_program: dup_page_for_program called on non program page\n");
+	page_use_record* new_record = sf_malloc(sizeof(page_use_record));
+	memset(new_record, 0, sizeof(page_use_record));
+	page->use_record->type = 1;
+	page_use_record* cursor = page->use_record;
+	assert(cursor != 0, "dup_page_for_program: use_record is empty\n");
+	while(cursor->next){
+		cursor = cursor->next;
+	}
+	cursor->next = new_record;
+	new_record->type = 1;
+	new_record->pt = (uint64_t) map;
+}
+
+void free_page_for_program(page_entry* page, m_map* map){
+	assert(page->used_by == 3, "free_page_for_program: page is not a user program page\n");
+	page_use_record* cursor = page->use_record;
+	assert(cursor != 0, "free_page_for_program: use_record is empty\n");
+	if((m_map*)cursor->pt == map){
+		// this the last free for this page, now actually free it
+		sf_free(cursor);
+		page->used_by = 0;
+		return;
+	}
+	// else delete from linked list
+	char found = 0;
+	while(cursor->next){
+		if((m_map*)cursor->next->pt == map){
+			page_use_record* old_record = cursor->next;
+			cursor->next = old_record->next;
+			sf_free(old_record);
+			found = 1;
+		}else{
+			cursor = cursor->next;
+		}
+	}
+	assert(found, "free_page_for_program unable to found page\n");
 }
 
 void kernel_page_table_init(){
@@ -309,8 +352,28 @@ void* kbrk(uint64_t size) {
 uint64_t translate_cr3(uint64_t pml4, uint64_t virtual_addr){
 	// TODO: add early terminated page table support
 	register uint64_t pdp = (((uint64_t*)(pml4 & 0xFFFFFFFFFF000))[(virtual_addr>>39) & 0b111111111]);
+	if(!(pdp & 0x1)) return 0;
 	register uint64_t pd = (((uint64_t*)(pdp & 0xFFFFFFFFFF000))[(virtual_addr>>30) & 0b111111111]);
+	if(!(pd & 0x1)) return 0;
 	register uint64_t pt = (((uint64_t*)(pd & 0xFFFFFFFFFF000))[(virtual_addr>>21) & 0b111111111]);
+	if(!(pt & 0x1)) return 0;
 	register uint64_t pte = (((uint64_t*)(pt & 0xFFFFFFFFFF000))[(virtual_addr>>12) & 0b111111111]);
+	if(!(pte & 0x1)) return 0;
 	return (pte & 0xFFFFFFFFFF000) + (virtual_addr & 0xFFF);
+}
+
+int set_pte_rw(uint64_t pml4, uint64_t virtual_addr, char rw){
+	register uint64_t pdp = (((uint64_t*)(pml4 & 0xFFFFFFFFFF000))[(virtual_addr>>39) & 0b111111111]);
+	if(!(pdp & 0x1)) return 0;
+	register uint64_t pd = (((uint64_t*)(pdp & 0xFFFFFFFFFF000))[(virtual_addr>>30) & 0b111111111]);
+	if(!(pd & 0x1)) return 0;
+	register uint64_t pt = (((uint64_t*)(pd & 0xFFFFFFFFFF000))[(virtual_addr>>21) & 0b111111111]);
+	if(!(pt & 0x1)) return 0;
+	register uint64_t pte = (((uint64_t*)(pt & 0xFFFFFFFFFF000))[(virtual_addr>>12) & 0b111111111]);
+	if(!(pte & 0x1)) return 0;
+	if(rw) (((uint64_t*)(pt & 0xFFFFFFFFFF000))[(virtual_addr>>12) & 0b111111111]) &= 
+		0xFFFFFFFFFFFFFFFD;
+	else (((uint64_t*)(pt & 0xFFFFFFFFFF000))[(virtual_addr>>12) & 0b111111111]) |= 
+		0x2;
+	return 1;
 }
