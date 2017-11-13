@@ -60,6 +60,11 @@ int streq(char* a, char* b){
 	return 0;
 }
 
+uint32_t strlen(char* a){
+	for(uint32_t ret = 0;*a; a++, ret++);
+	return ret;
+}
+
 int memeq(void* a1, void* b1, int64_t size){
 	unsigned char* a = a1;
 	unsigned char* b = b1;

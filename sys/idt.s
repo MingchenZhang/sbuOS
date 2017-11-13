@@ -8,8 +8,6 @@ lidt:
 	.global isr\num
 	.type isr\num, @function
 	isr\num:
-		#addq $16 ,%rsp
-		#iretq
 		pushq $0
 		pushq $\num
 		jmp ISR_HANDLER_WRAPER
@@ -19,8 +17,6 @@ lidt:
 	.global isr\num
 	.type isr\num, @function
 	isr\num:
-		#addq $16 ,%rsp
-		#iretq
 		pushq $\num
 		jmp ISR_HANDLER_WRAPER
 .ENDM

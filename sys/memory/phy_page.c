@@ -128,7 +128,7 @@ void* get_phy_page(uint32_t num, char used_by){
 page_entry* get_phy_page_for_program(Process* proc, m_map* map){
 	page_entry* new_page = find_free_page_entry();
 	new_page->used_by = 3;
-	new_page->use_record = sf_malloc(sizeof(page_use_record));
+	new_page->use_record = sf_calloc(sizeof(page_use_record), 1);
 	memset(new_page->use_record, 0, sizeof(page_use_record));
 	new_page->use_record->type = 1;
 	new_page->use_record->pt = (uint64_t)map;
@@ -137,7 +137,7 @@ page_entry* get_phy_page_for_program(Process* proc, m_map* map){
 
 void dup_page_for_program(page_entry* page, m_map* map){
 	assert(page->used_by == 3, "dup_page_for_program: dup_page_for_program called on non program page\n");
-	page_use_record* new_record = sf_malloc(sizeof(page_use_record));
+	page_use_record* new_record = sf_calloc(sizeof(page_use_record), 1);
 	memset(new_record, 0, sizeof(page_use_record));
 	page->use_record->type = 1;
 	page_use_record* cursor = page->use_record;

@@ -47,3 +47,16 @@ int64_t tarfs_read(char* file_path, void* buffer, int64_t size, int64_t offset){
 	}
 	return -1;
 }
+
+uint64_t tarfs_find_offset(char* file_path){
+	void* cursor = tarfs_start;
+	while((void*)cursor<tarfs_end){
+		int64_t file_size = read_oct(((posix_header_ustar*)cursor)->size);
+		if(streq(((posix_header_ustar*)cursor)->name, file_path)){
+			cursor += 512;
+			return (uint64_t)cursor;
+		}
+		cursor += ((((file_size-1)>>9)+1)<<9) + 512;
+	}
+	return 0;
+}

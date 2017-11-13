@@ -9,7 +9,7 @@ waiter* first_waiter = 0;
 void register_to_be_waken(Process* proc, uint64_t ticks_to_wake){
 	waiter* cursor = first_waiter;
 	if(!cursor){
-		first_waiter = sf_malloc(sizeof(waiter));
+		first_waiter = sf_calloc(sizeof(waiter), 1);
 		memset(first_waiter, 0, sizeof(waiter));
 		first_waiter->proc = proc;
 		first_waiter->ticks_to_wake = ticks_to_wake;
@@ -19,7 +19,7 @@ void register_to_be_waken(Process* proc, uint64_t ticks_to_wake){
 	while(cursor->next){
 		cursor = cursor->next;
 	}
-	waiter* new_waiter = sf_malloc(sizeof(waiter));
+	waiter* new_waiter = sf_calloc(sizeof(waiter), 1);
 	memset(new_waiter, 0, sizeof(waiter));
 	new_waiter->proc = proc;
 	new_waiter->ticks_to_wake = ticks_to_wake;

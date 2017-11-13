@@ -25,6 +25,13 @@ long sys_test_fork(){
 	return ret;
 }
 
+void sys_test_exit(){
+	__asm__ volatile (
+		"movq $2, %%rdi;"
+		"int $0x80;"
+		::);
+}
+
 void sys_test_wait(long sec){
 	__asm__ volatile (
 		"movq $254, %%rdi;"
@@ -51,17 +58,26 @@ void stack(int count){
 
 int main(int argc, char**argv){
 	if(sys_test_fork()){
-		// parent
-		while(1){
+		if(sys_test_fork()){
+			// parent
+			while(1){
+				sys_test_wait(3);
+				sys_print("parent report\n");
+			}
+		}
+		//child 2
+		for(int i=0; i<2; i++){
 			sys_test_wait(2);
-			sys_print("parent report\n");
+			sys_print("child2 report\n");
 		}
+		sys_test_exit();
 	}else{
-		//child
-		while(1){
+		//child 1
+		for(int i=0; i<2; i++){
 			sys_test_wait(3);
-			sys_print("child report\n");
+			sys_print("child1 report\n");
 		}
+		sys_test_exit();
 	}
-	while(1);
+	sys_test_exit();
 }

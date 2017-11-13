@@ -33,4 +33,6 @@ void scan_tarfs();
 
 int64_t tarfs_read(char* file_path, void* buffer, int64_t size, int64_t offset);
 
+uint64_t tarfs_find_offset(char* file_path);
+
 #endif

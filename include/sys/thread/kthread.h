@@ -27,7 +27,10 @@ struct Process{
 	uint64_t rsp_current;
 	uint64_t heap_start;
 	uint64_t heap_break;
-	char on_hold;
+	unsigned char on_hold: 1;
+	unsigned char terminated: 1;
+	unsigned char cleaned: 1;
+	uint64_t ret_value;
 	m_map* first_map;
 };
 
@@ -58,6 +61,9 @@ void* add_page_for_process(Process* proc, uint64_t new_address, char rw);
 void spawn_process(program_section* section, char* elf_file_path);
 
 Process* fork_process(Process* parent);
+
+void process_cleanup(Process* proc);
+
 int check_and_handle_rw_page_fault(Process* proc, uint64_t addr/* accessed address */);
 
 void add_kernel_thread_to_process_list();

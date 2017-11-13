@@ -117,7 +117,7 @@ void test_spawn_process_elf(program_section* section, char* elf_file_path){
 	*(stack_start - 5) = section->entry_point; // where ip starts
 	*(stack_start - 6) = 0;	// error code
 	*(stack_start - 7) = 0x80; // interrupt number
-	Process* new_p = sf_malloc(sizeof(Process));
+	Process* new_p = sf_calloc(sizeof(Process), 1);
 	new_p->id = id_count++;
 	new_p->name = "test elf process";
 	new_p->next = 0;
@@ -136,13 +136,14 @@ void test_spawn_process_elf(program_section* section, char* elf_file_path){
 }
 
 m_map* add_new_m_map_for_process(Process* proc, char type, char shared, char rw, uint64_t vir_addr){
-	m_map* map = sf_malloc(sizeof(m_map));
+	m_map* map = sf_calloc(sizeof(m_map), 1);
 	map->type = type;
 	map->proc = proc;
 	map->shared = shared;
 	map->rw = rw;
 	map->phy_page = get_phy_page_for_program(proc, map);
 	map->vir_addr = vir_addr;
+	map->next = 0;
 	m_map* cursor = proc->first_map;
 	if(!cursor){
 		proc->first_map = map;
@@ -156,7 +157,7 @@ m_map* add_new_m_map_for_process(Process* proc, char type, char shared, char rw,
 }
 
 m_map* dup_new_m_map_for_process(Process* proc/* dest proc */, char type, char shared, char rw, uint64_t vir_addr, page_entry* old_page){
-	m_map* map = sf_malloc(sizeof(m_map));
+	m_map* map = sf_calloc(sizeof(m_map), 1);
 	map->type = type;
 	map->proc = proc;
 	map->shared = shared;
@@ -164,6 +165,7 @@ m_map* dup_new_m_map_for_process(Process* proc/* dest proc */, char type, char s
 	dup_page_for_program(old_page, map);
 	map->phy_page = old_page;
 	map->vir_addr = vir_addr;
+	map->next = 0;
 	m_map* cursor = proc->first_map;
 	if(!cursor){
 		proc->first_map = map;
@@ -221,9 +223,9 @@ void* add_page_for_process(Process* proc, uint64_t new_address, char rw){
 }
 
 void spawn_process(program_section* section, char* elf_file_path){
-	Process* new_p = sf_malloc(sizeof(Process));
+	Process* new_p = sf_calloc(sizeof(Process), 1);
 	
-	m_map* pml4_map = sf_malloc(sizeof(m_map));
+	m_map* pml4_map = sf_calloc(sizeof(m_map), 1);
 	pml4_map->type = 3;
 	pml4_map->proc = new_p;
 	pml4_map->shared = 0;
@@ -234,7 +236,7 @@ void spawn_process(program_section* section, char* elf_file_path){
 	new_p->cr3 = (uint64_t)PML4;
 	new_p->first_map = pml4_map;
 	
-	m_map* pdp1_map = sf_malloc(sizeof(m_map));
+	m_map* pdp1_map = sf_calloc(sizeof(m_map), 1);
 	pml4_map->next = pdp1_map;
 	pdp1_map->type = 1;
 	pdp1_map->proc = new_p;
@@ -376,9 +378,9 @@ void* dup_page_for_process(Process* proc_dest, uint64_t new_address, char rw, pa
 
 Process* fork_process(Process* parent){
 	// before calling, parent process state must be written back (rip, rsp)
-	Process* new_p = sf_malloc(sizeof(Process));
+	Process* new_p = sf_calloc(sizeof(Process), 1);
 	
-	m_map* pml4_map = sf_malloc(sizeof(m_map));
+	m_map* pml4_map = sf_calloc(sizeof(m_map), 1);
 	pml4_map->type = 3;
 	pml4_map->proc = new_p;
 	pml4_map->shared = 0;
@@ -389,7 +391,7 @@ Process* fork_process(Process* parent){
 	new_p->cr3 = (uint64_t)PML4;
 	new_p->first_map = pml4_map;
 	
-	m_map* pdp1_map = sf_malloc(sizeof(m_map));
+	m_map* pdp1_map = sf_calloc(sizeof(m_map), 1);
 	pml4_map->next = pdp1_map;
 	pdp1_map->type = 1;
 	pdp1_map->proc = new_p;
@@ -455,6 +457,38 @@ Process* fork_process(Process* parent){
 	return new_p;
 }
 
+void process_cleanup(Process* proc){
+	m_map* map_cur = proc->first_map;
+	while(map_cur){
+		free_page_for_program(map_cur->phy_page, map_cur);
+		map_cur = map_cur->next;
+	}
+	
+	map_cur = proc->first_map;
+	while(map_cur){
+		m_map* next = map_cur->next;
+		sf_free(map_cur);
+		map_cur = next;
+	}
+	
+	// now remove process from schedule list
+	if(first_process == proc){
+		first_process = proc->next;
+	}else{
+		Process* proc_c = first_process;
+		while(proc_c->next){
+			if(proc_c->next == proc){
+				proc_c->next = proc->next;
+			}else{
+				proc_c = proc_c->next;
+			}
+		}
+	}
+	
+	// now proc still exist with everything reclaimed, it is a zombie now. 
+	proc->cleaned = 1;
+}
+
 int check_and_handle_rw_page_fault(Process* proc, uint64_t addr/* accessed address */){
 	m_map* map_cur = proc->first_map;
 	while(map_cur->next){
@@ -495,6 +529,10 @@ void process_schedule(){
 		}
 		if(!next->on_hold){
 			break;
+		}
+		if(next->terminated && !next->cleaned){
+			kprintf("DEBUG: cleaning proc id:%d\n", next->id);
+			process_cleanup(next);
 		}
 		next = next->next;
 		if(!next) next = first_process;

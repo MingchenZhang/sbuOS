@@ -172,10 +172,21 @@ void isr_handler(handler_reg volatile reg){
 		__asm__ volatile("movq %0, %%cr3"::"r"((uint64_t)kernel_page_table_PML4)); // return to kernel page table for complex op
 		// syscall return must be written back to reg.rax
 		if(reg.rdi == 1){
+			// fork
 			kprintf("syscall: fork called\n");
 			Process* new_p = fork_process(current_process);
 			reg.rax = new_p->id;
 			kprintf("DEBUG: fork complete\n");
+		}else if(reg.rdi == 2){
+			// exit
+			kprintf("syscall: exit called\n");
+			current_process->on_hold = 1;
+			current_process->terminated = 1;
+			// kprintf("syscall: exit complete\n");
+		}else if(reg.rdi == 3){
+			// exec
+			kprintf("syscall: exec called\n");
+			
 		}else if(reg.rdi == 100){
 			kprintf("syscall 1\n");
 		}else if(reg.rdi == 101){
@@ -211,6 +222,7 @@ void isr_handler(handler_reg volatile reg){
 		__asm__ volatile("movq %0, %%cr3"::"r"((uint64_t)current_process->cr3)); 
 	}else if(reg.int_num == 13){
 		kprintf("General Protection fault occurred. Fault num: %d\n", reg.err_num);
+		kprintf("fault rip: %x\n", reg.ret_rip);
 		while(1); // halt the system to figure out what's wrong
 	}else if(reg.int_num == 14){
 		uint64_t program_cr3;
