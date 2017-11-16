@@ -27,6 +27,11 @@ struct posix_header_ustar {
 };
 typedef struct posix_header_ustar posix_header_ustar;
 
+typedef struct tar_file_info{
+	uint64_t mem_offset;
+	int64_t size;
+}tar_file_info;
+
 void init_tarfs(void* start, void* end);
 
 void scan_tarfs();
@@ -34,5 +39,7 @@ void scan_tarfs();
 int64_t tarfs_read(char* file_path, void* buffer, int64_t size, int64_t offset);
 
 uint64_t tarfs_find_offset(char* file_path);
+
+tar_file_info tarfs_file_info(char* file_path);
 
 #endif

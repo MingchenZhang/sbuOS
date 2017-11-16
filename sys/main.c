@@ -14,9 +14,7 @@
 #include <sys/terminal.h>
 
 #define INITIAL_STACK_SIZE 4096
-#define RSP0_STACK_SIZE 2048
 uint8_t initial_stack[INITIAL_STACK_SIZE]__attribute__((aligned(16)));
-uint8_t rsp0_stack[RSP0_STACK_SIZE]__attribute__((aligned(16))); // used as a clean stack to switch back to ring0
 uint32_t* loader_stack;
 extern char kernmem, physbase;
 
@@ -60,6 +58,7 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 	kernel_page_table_init();
 	init_terminal();
 	init_tarfs(&_binary_tarfs_start, &_binary_tarfs_end);
+	init_process();
 	
 	// char* buffer = (void*)0x1000000;
 	// int64_t readed = tarfs_read("bin/cat", buffer, 512);
@@ -81,19 +80,23 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 		spawn_process(result, "bin/init");
 	}
 	
-	// program_section* result1;
-	// if(!(result1 = read_elf_tarfs("bin/test"))) {
-		// kprintf("read_elf_tarfs failed\n");
-		// while(1) __asm__("hlt;");
+	// {
+		// program_section* result;
+		// if(!(result = read_elf_tarfs("bin/test"))) {
+			// kprintf("read_elf_tarfs failed\n");
+			// while(1) __asm__("hlt;");
+		// }
+		// spawn_process(result, "bin/test");
 	// }
-	// spawn_process(result1, "bin/test");
 	
-	// program_section* result2;
-	// if(!(result2 = read_elf_tarfs("bin/test2"))) {
-		// kprintf("read_elf_tarfs failed\n");
-		// while(1) __asm__("hlt;");
+	// {
+		// program_section* result;
+		// if(!(result = read_elf_tarfs("bin/test2"))) {
+			// kprintf("read_elf_tarfs failed\n");
+			// while(1) __asm__("hlt;");
+		// }
+		// spawn_process(result, "bin/test2");
 	// }
-	// spawn_process(result2, "bin/test2");
 	
 	// {
 		// program_section* result;
@@ -102,37 +105,18 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 			// while(1) __asm__("hlt;");
 		// }
 		// spawn_process(result, "bin/test3");
-	// }
-	
-	// {
-		// program_section* result;
-		// if(!(result = read_elf_tarfs("bin/test3"))) {
-			// kprintf("read_elf_tarfs failed\n");
-			// while(1) __asm__("hlt;");
-		// }
-		// spawn_process(result, "bin/test3");
-	// }
-	
-	// {
-		// program_section* result;
-		// if(!(result = read_elf_tarfs("bin/stack_test"))) {
-			// kprintf("read_elf_tarfs failed\n");
-			// while(1) __asm__("hlt;");
-		// }
-		// spawn_process(result, "bin/stack_test");
 	// }
 	
 	{
-		char* path = "bin/fork_test";
 		program_section* result;
-		if(!(result = read_elf_tarfs(path))) {
+		if(!(result = read_elf_tarfs("bin/fork_test"))) {
 			kprintf("read_elf_tarfs failed\n");
 			while(1) __asm__("hlt;");
 		}
-		spawn_process(result, path);
-	}	
+		spawn_process(result, "bin/fork_test");
+	}
 	
-	// kprintf("threads created\n");
+	kprintf("threads created\n");
 	
 	// kprintf("init pci\n");
 	// init_pci();
@@ -143,7 +127,7 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 	// enable the interrupt
 	// __asm__ volatile("sti;");
 	
-	set_tss_rsp(rsp0_stack+RSP0_STACK_SIZE);
+	// set_tss_rsp(rsp0_stack+RSP0_STACK_SIZE);
 	
 	__asm__ volatile (
 		"movq $255, %rdi;"

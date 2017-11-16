@@ -7,6 +7,7 @@
 #include <sys/elf64.h>
 #include <sys/tarfs.h>
 #include <sys/idt.h>
+#include <sys/gdt.h>
 
 #define EFLAGS_PROCESS 0x200216 // 0x200046 for no interrupt, 0x200216 for interrupt
 
@@ -15,124 +16,15 @@ Process* current_process = 0;
 Process* previous_process = 0;
 uint32_t id_count = 0;
 
-void add_page_to_pt(uint64_t pml4, uint64_t new_address, uint64_t points_to){
-	register uint64_t* pml4e = &(((uint64_t*)(pml4 & 0xFFFFFFFFFF000))[(new_address>>39) & 0b111111111]);
-	if((*pml4e & 0x1) == 0){
-		PDPE* pdp = get_phy_page(1, 3);
-		memset(pdp, 0, 4096);
-		PML4E* pml4e_ = (PML4E*)pml4e;
-		pml4e_->P = 1;
-		pml4e_->RW = 1;
-		pml4e_->US = 1;
-		pml4e_->PDPE_addr = (uint64_t)pdp >> 12;
-	}
-	register uint64_t* pdpe = &(((uint64_t*)(*pml4e & 0xFFFFFFFFFF000))[(new_address>>30) & 0b111111111]);
-	if((*pdpe & 0x1) == 0){
-		PDPE* pd = get_phy_page(1, 3);
-		memset(pd, 0, 4096);
-		PDPE* pdpe_ = (PDPE*)pdpe;
-		pdpe_->P = 1;
-		pdpe_->RW = 1;
-		pdpe_->US = 1;
-		pdpe_->PS = 0;
-		pdpe_->PDPE_addr = (uint64_t)pd >> 12;
-	}
-	register uint64_t* pde = &(((uint64_t*)(*pdpe & 0xFFFFFFFFFF000))[(new_address>>21) & 0b111111111]);
-	if((*pde & 0x1) == 0){
-		PDPE* pt = get_phy_page(1, 3);
-		memset(pt, 0, 4096);
-		PDE* pde_ = (PDE*)pde;
-		pde_->P = 1;
-		pde_->RW = 1;
-		pde_->US = 1;
-		pde_->PS = 0;
-		pde_->PDPE_addr = (uint64_t)pt >> 12;
-	}
-	register uint64_t* pte = &(((uint64_t*)(*pde & 0xFFFFFFFFFF000))[(new_address>>12) & 0b111111111]);
-	if((*pte & 0x1) == 0){
-		PTE* pte_ = (PTE*)pte;
-		pte_->P = 1;
-		pte_->RW = 1;
-		pte_->US = 1;
-		pte_->PDPE_addr = (uint64_t)points_to >> 12;
-	}
-}
+#define RSP0_STACK_SIZE 2048
+uint8_t rsp0_stack[RSP0_STACK_SIZE]__attribute__((aligned(16))); // used as a clean stack to switch back to ring0
 
-uint64_t create_process_page_table_elf(program_section* section, char* elf_file_path){
-	PML4E* PML4 = get_phy_page(1, 3);
-	PDPE* PDP1 = get_phy_page(1, 3);
-	memset(PML4, 0, 4096);
-	memset(PDP1, 0, 4096);
-	
-	PML4E* pml1 = PML4 + 511; // upper pml4 entry
-	pml1->P = 1;
-	pml1->RW = 1;
-	pml1->US = 1;
-	pml1->PDPE_addr = (uint64_t)PDP1 >> 12;
-	
-	PDPE* pdp1 = PDP1 + 511; // upper pdp entry
-	pdp1->P = 1;
-	pdp1->RW = 1;
-	pdp1->US = 0;
-	pdp1->PS = 0;
-	pdp1->PDPE_addr = (uint64_t)kernel_base_pd >> 12; // points to the start of the memory
-	
-	PDPE* pdp2 = PDP1 + 510; // kmalloc pdp entry
-	pdp2->P = 1;
-	pdp2->RW = 1;
-	pdp2->US = 0;
-	pdp2->PS = 0;
-	pdp2->PDPE_addr = (uint64_t)kernel_malloc_pd >> 12; // points to the start of the memory
-	
-	add_page_to_pt((uint64_t)PML4, PROCESS_INITIAL_RSP, (uint64_t)get_phy_page(1, 3)); // just alloc one page stack
-	
-	// alloc data pages
-	while(section){
-		uint64_t progress = 0;
-		for(;progress < section->size; progress += 4096){
-			void* new_page = get_phy_page(1, 3);
-			int32_t to_read = 4096;
-			if(section->size - progress < 4096) to_read = section->size - progress;
-			if(tarfs_read(elf_file_path, new_page, to_read, progress) < to_read){
-				kprintf("ERROR: cannot read enough segment from elf file\n");
-				while(1); // TODO: clean up and return instead of hung
-			}
-			add_page_to_pt((uint64_t) PML4, section->memory_offset+progress, (uint64_t) new_page);
-		}
-		section = section->next;
-	}
-	
-	return (uint64_t)PML4;
-}
+extern void AFTER_CONTEXT_SWITCH();
 
-void test_spawn_process_elf(program_section* section, char* elf_file_path){
-	kprintf("DEBUG: start generating page table\n");
-	uint64_t cr3 = create_process_page_table_elf(section, elf_file_path);
-	
-	uint64_t* stack_start = (uint64_t*)(translate_cr3(cr3, PROCESS_INITIAL_RSP));
-	*(stack_start - 1) = USER_STACK_SEGMENT_SELECTOR; // stack segment selector
-	*(stack_start - 2) = (uint64_t)PROCESS_INITIAL_RSP; // where stack starts
-	*(stack_start - 3) = EFLAGS_PROCESS;  // EFLAGS
-	*(stack_start - 4) = USER_CODE_SEGMENT_SELECTOR; // code segment seletor
-	*(stack_start - 5) = section->entry_point; // where ip starts
-	*(stack_start - 6) = 0;	// error code
-	*(stack_start - 7) = 0x80; // interrupt number
-	Process* new_p = sf_calloc(sizeof(Process), 1);
-	new_p->id = id_count++;
-	new_p->name = "test elf process";
-	new_p->next = 0;
-	new_p->cr3 = cr3;
-	new_p->rsp = (uint64_t)(PROCESS_INITIAL_RSP - 8*16);
-	new_p->rip = section->entry_point;
-	// attach new process to the end
-	if(!first_process) first_process = new_p;
-	else{
-		Process* cursor = first_process;
-		while(cursor->next){
-			cursor = cursor->next;
-		}
-		cursor->next = new_p;
-	}
+void init_process(){
+	process_rsp0_start = process_direct_mapping_addr - RPOCESS_RSP0_SIZE;
+	process_initial_rsp = process_rsp0_start;
+	set_tss_rsp((void*)process_rsp0_start + RPOCESS_RSP0_SIZE - 16); 
 }
 
 m_map* add_new_m_map_for_process(Process* proc, char type, char shared, char rw, uint64_t vir_addr){
@@ -178,7 +70,7 @@ m_map* dup_new_m_map_for_process(Process* proc/* dest proc */, char type, char s
 	return map;
 }
 
-void* add_page_for_process(Process* proc, uint64_t new_address, char rw){
+void* add_page_for_process(Process* proc, uint64_t new_address, char rw, char map_type){
 	uint64_t pml4 = proc->cr3;
 	register uint64_t* pml4e = &(((uint64_t*)(pml4 & 0xFFFFFFFFFF000))[(new_address>>39) & 0b111111111]);
 	if((*pml4e & 0x1) == 0){
@@ -213,7 +105,7 @@ void* add_page_for_process(Process* proc, uint64_t new_address, char rw){
 		pde_->PDPE_addr = (uint64_t)pt >> 12;
 	}
 	register uint64_t* pte = &(((uint64_t*)(*pde & 0xFFFFFFFFFF000))[(new_address>>12) & 0b111111111]);
-	void* dest = add_new_m_map_for_process(proc, 2, 0, rw, new_address)->phy_page->base;
+	void* dest = add_new_m_map_for_process(proc, map_type, 0, rw, new_address)->phy_page->base;
 	PTE* pte_ = (PTE*)pte;
 	pte_->P = 1;
 	pte_->RW = rw;
@@ -254,6 +146,12 @@ void spawn_process(program_section* section, char* elf_file_path){
 	pml1->US = 1;
 	pml1->PDPE_addr = (uint64_t)PDP1 >> 12;
 	
+	PML4E* pml2 = PML4 + 510; // upper pml4 entry
+	pml2->P = 1;
+	pml2->RW = 1;
+	pml2->US = 0;
+	pml2->PDPE_addr = (uint64_t)0 >> 12; // a simple direct mapping
+	
 	PDPE* pdp1 = PDP1 + 511; // upper pdp entry
 	pdp1->P = 1;
 	pdp1->RW = 1;
@@ -268,18 +166,15 @@ void spawn_process(program_section* section, char* elf_file_path){
 	pdp2->PS = 0;
 	pdp2->PDPE_addr = (uint64_t)kernel_malloc_pd >> 12; // points to the start of the memory
 	
-	//create one page for the stack now
-	add_page_for_process(new_p, PROCESS_INITIAL_RSP, 1);
-	//add_page_to_pt((uint64_t)PML4, PROCESS_INITIAL_RSP, (uint64_t)get_phy_page(1, 3)); // just alloc one page stack
+	// create one page for the stack now
+	assert(RPOCESS_RSP0_SIZE == 4096, "ERROR: only 4096 rsp0 stack supported\n");
+	void* actual_rsp0 = add_page_for_process(new_p, (uint64_t)process_rsp0_start, 1, 4);
+	add_page_for_process(new_p, (uint64_t)process_initial_rsp - 16, 1, 2);
 	
 	// alloc data pages
 	program_section* section_cursor = section;
 	uint64_t section_height_max = 0;
 	while(section_cursor){
-		// section_cursor->file_offset
-		// section_cursor->memory_offset
-		// section_cursor->size
-		// section_cursor->entry_point
 		uint64_t prog_disk = section_cursor->file_offset;
 		uint64_t prog_mem = section_cursor->memory_offset;
 		uint64_t to_read = 0;
@@ -287,37 +182,41 @@ void spawn_process(program_section* section, char* elf_file_path){
 		for(; remain != 0; 
 			prog_disk += to_read, prog_mem += to_read, remain -= to_read){
 			to_read = math_min(4096, 4096-(prog_mem % 4096), remain, (uint64_t)-1);
-			void* new_page = add_page_for_process(new_p, prog_mem, 1);
+			void* new_page = add_page_for_process(new_p, prog_mem, 1, 2);
 			if(tarfs_read(elf_file_path, new_page+(prog_mem%4096), to_read, prog_disk) < to_read){
 				kprintf("ERROR: cannot read enough segment from elf file\n");
 				while(1); // TODO: clean up and return instead of hung
 			}
 		}
-		// for(uint64_t progress = 0; progress < section_cursor->size; progress += 4096){
-			// uint64_t section_h = section_cursor->memory_offset+section_cursor->size;
-			// if(section_h>section_height_max) section_height_max = section_h;
-			// void* new_page = add_page_for_process(new_p, section_cursor->memory_offset+progress, 1);
-			// int32_t to_read = 4096;
-			// if(section_cursor->size - progress < 4096) to_read = section_cursor->size - progress;
-			// if(tarfs_read(elf_file_path, new_page, to_read, progress) < to_read){
-				// kprintf("ERROR: cannot read enough segment from elf file\n");
-				// while(1); // TODO: clean up and return instead of hung
-			// }
-		// }
 		section_cursor = section_cursor->next;
 	}
 	
 	// now the address space is set up
 	
+	handler_reg* reg = (void*)(actual_rsp0 + RPOCESS_RSP0_SIZE - 16 - sizeof(handler_reg));// does not support multuple rsp0 pages
+	handler_reg* reg2 = reg - 1;
 	new_p->id = id_count++;
 	new_p->name = "elf process";
 	new_p->next = 0;
 	new_p->cr3 = (uint64_t)PML4;
-	new_p->rsp = (uint64_t)(PROCESS_INITIAL_RSP);
-	new_p->rip = section->entry_point;
-	new_p->rsp_current = (uint64_t)(PROCESS_INITIAL_RSP);
+	new_p->rsp = (uint64_t)(process_rsp0_start + RPOCESS_RSP0_SIZE - 16- 2*sizeof(handler_reg));
+	new_p->rsp_current = (uint64_t)(process_initial_rsp);
 	new_p->heap_start = section_height_max;
 	new_p->heap_break = section_height_max;
+	// setup basic rsp0 content
+	memset(reg, 0, sizeof(handler_reg));
+	reg->cs = USER_CODE_SEGMENT_SELECTOR;
+	reg->ss = USER_STACK_SEGMENT_SELECTOR;
+	reg->eflags = EFLAG_INTERRUPT; // enable interrupt
+	reg->ret_rsp = (uint64_t)(process_initial_rsp - 16);
+	reg->ret_rip = section->entry_point;
+	// setup basic rsp0 context switch content
+	memset(reg2, 0, sizeof(handler_reg));
+	reg2->cs = KERNEL_CODE_SEGMENT_SELECTOR;
+	reg2->ss = KERNEL_STACK_SEGMENT_SELECTOR;
+	reg2->eflags = EFLAG_NO_INTERRUPT; // disable interrupt
+	reg2->ret_rsp = (uint64_t)(process_rsp0_start + RPOCESS_RSP0_SIZE - 16- sizeof(handler_reg));
+	reg2->ret_rip = (uint64_t)AFTER_CONTEXT_SWITCH;
 	// attach new process to the end
 	if(!first_process) first_process = new_p;
 	else{
@@ -409,6 +308,12 @@ Process* fork_process(Process* parent){
 	pml1->US = 1;
 	pml1->PDPE_addr = (uint64_t)PDP1 >> 12;
 	
+	PML4E* pml2 = PML4 + 510; // upper pml4 entry
+	pml2->P = 1;
+	pml2->RW = 1;
+	pml2->US = 0;
+	pml2->PDPE_addr = (uint64_t)0 >> 12; // a simple direct mapping
+	
 	PDPE* pdp1 = PDP1 + 511; // upper pdp entry
 	pdp1->P = 1;
 	pdp1->RW = 1;
@@ -423,6 +328,10 @@ Process* fork_process(Process* parent){
 	pdp2->PS = 0;
 	pdp2->PDPE_addr = (uint64_t)kernel_malloc_pd >> 12; // points to the start of the memory
 	
+	// create rsp0 stack for this process
+	assert(RPOCESS_RSP0_SIZE == 4096, "ERROR: only 4096 rsp0 stack supported\n");
+	void* actual_rsp0 = add_page_for_process(new_p, (uint64_t)process_rsp0_start, 1, 4);
+	
 	m_map* map_cur = parent->first_map;
 	while(map_cur){
 		if(map_cur->type == 2){
@@ -432,18 +341,42 @@ Process* fork_process(Process* parent){
 		map_cur = map_cur->next;
 	}
 	
+	handler_reg* reg = (void*)(actual_rsp0 + RPOCESS_RSP0_SIZE - 16 - sizeof(handler_reg));// does not support multuple rsp0 pages
+	handler_reg* reg2 = reg - 1;
 	new_p->id = id_count++;
-	new_p->name = "elf process";
+	new_p->name = "elf process (forked)";
 	new_p->next = 0;
 	new_p->cr3 = (uint64_t)PML4;
-	new_p->rsp = parent->rsp;
-	new_p->rip = parent->rip;
-	new_p->reg = parent->reg;
+	new_p->rsp = (uint64_t)(process_rsp0_start + RPOCESS_RSP0_SIZE - 16- 2*sizeof(handler_reg));
 	new_p->rsp_current = parent->rsp_current;
 	new_p->heap_start = parent->heap_start;
 	new_p->heap_break = parent->heap_break;
 	new_p->on_hold = 0;
 	new_p->reg.rax = 0; // forked process has a return value of 0
+	// setup basic rsp0 content
+	memset(reg, 0, sizeof(handler_reg));
+	reg->cs = USER_CODE_SEGMENT_SELECTOR;
+	reg->ss = USER_STACK_SEGMENT_SELECTOR;
+	reg->eflags = EFLAG_INTERRUPT; // enable interrupt
+	reg->ret_rsp = parent->saved_reg.ret_rsp;
+	reg->ret_rip = parent->saved_reg.ret_rip;
+	// setup basic rsp0 context switch content
+	memset(reg2, 0, sizeof(handler_reg));
+	reg2->cs = KERNEL_CODE_SEGMENT_SELECTOR;
+	reg2->ss = KERNEL_STACK_SEGMENT_SELECTOR;
+	reg2->eflags = EFLAG_NO_INTERRUPT; // disable interrupt
+	reg2->ret_rsp = (uint64_t)(process_rsp0_start + RPOCESS_RSP0_SIZE - 16- sizeof(handler_reg));
+	reg2->ret_rip = (uint64_t)AFTER_CONTEXT_SWITCH;
+	// copy the registers, rbp, r9, r8, rax, rcx, rdx, rbx, rsi, rdi;
+	reg->rbp = parent->saved_reg.rbp;
+	reg->r9  = parent->saved_reg.r9 ;
+	reg->r8  = parent->saved_reg.r8 ;
+	reg->rax = parent->saved_reg.rax;
+	reg->rcx = parent->saved_reg.rcx;
+	reg->rdx = parent->saved_reg.rdx;
+	reg->rbx = parent->saved_reg.rbx;
+	reg->rsi = parent->saved_reg.rsi;
+	reg->rdi = parent->saved_reg.rdi;
 	// attach new process to the end
 	if(!first_process) first_process = new_p;
 	else{
@@ -495,7 +428,7 @@ int check_and_handle_rw_page_fault(Process* proc, uint64_t addr/* accessed addre
 		m_map* curr_map = map_cur->next;
 		if((curr_map->type == 2) && (curr_map->vir_addr>>12 == addr>>12)){
 			if(curr_map->rw){
-				void* new_page = add_page_for_process(proc, addr, 1);
+				void* new_page = add_page_for_process(proc, addr, 1, 2);
 				memcpy(new_page, curr_map->phy_page, 4096);
 				free_page_for_program(curr_map->phy_page, curr_map);
 				map_cur->next = map_cur->next->next;
@@ -532,7 +465,10 @@ void process_schedule(){
 		}
 		if(next->terminated && !next->cleaned){
 			kprintf("DEBUG: cleaning proc id:%d\n", next->id);
-			process_cleanup(next);
+			// process_cleanup(next);
+			kernel_space_task_file.type = TASK_PROC_CLEANUP;
+			kernel_space_task_file.param[0] = (uint64_t)next;
+			kernel_space_handler_wrapper();
 		}
 		next = next->next;
 		if(!next) next = first_process;
@@ -548,6 +484,10 @@ void process_schedule(){
 	// kprintf("process_schedule next: %p\n", next);
 	previous_process = current_process;
 	current_process = next;
+	
+	// if(previous_process != current_process){
+		// kprintf("DEBUG: process_schedule: switch to %d\n", current_process->id);
+	// }
 }
 
 void save_current_state(handler_reg volatile reg){
@@ -555,6 +495,10 @@ void save_current_state(handler_reg volatile reg){
 		current_process->rsp = reg.ret_rsp;
 		current_process->rip = reg.ret_rip;
 	}
+}
+
+void save_current_rsp(uint64_t rsp){
+	if(current_process) current_process->rsp = rsp;
 }
 
 void save_previous_rsp(uint64_t rsp){
@@ -576,6 +520,12 @@ void save_previous_registers(handler_reg volatile reg){
 		previous_process->reg.rbx = reg.rbx;
 		previous_process->reg.rsi = reg.rsi;
 		previous_process->reg.rdi = reg.rdi;
+	}
+}
+
+void save_current_cr3(uint64_t cr3){
+	if(current_process){
+		current_process->cr3 = cr3;
 	}
 }
 
@@ -603,4 +553,51 @@ void load_previous_registers(handler_reg volatile reg){
 		reg.rsi = current_process->reg.rsi;
 		reg.rdi = current_process->reg.rdi;
 	}
+}
+
+void save_current_states(handler_reg volatile reg){
+	if(current_process){
+		current_process->rsp = reg.ret_rsp;
+		current_process->rip = reg.ret_rip;
+		current_process->reg.rbp = reg.rbp;
+		current_process->reg.r9 = reg.r9;
+		current_process->reg.r8 = reg.r8;
+		current_process->reg.rax = reg.rax;
+		current_process->reg.rcx = reg.rcx;
+		current_process->reg.rdx = reg.rdx;
+		current_process->reg.rbx = reg.rbx;
+		current_process->reg.rsi = reg.rsi;
+		current_process->reg.rdi = reg.rdi;
+	}
+}
+
+void load_current_states(handler_reg volatile reg){
+	if(current_process) {
+		reg.ret_rsp = current_process->rsp;
+		reg.ret_rip = current_process->rip;
+		reg.rbp = current_process->reg.rbp;
+		reg.r9 = current_process->reg.r9;
+		reg.r8 = current_process->reg.r8;
+		reg.rax = current_process->reg.rax;
+		reg.rcx = current_process->reg.rcx;
+		reg.rdx = current_process->reg.rdx;
+		reg.rbx = current_process->reg.rbx;
+		reg.rsi = current_process->reg.rsi;
+		reg.rdi = current_process->reg.rdi;
+		change_kernel_rsp0(current_process->rsp0_real_addr);
+	}
+}
+
+void load_current_rsp0_to_kernel(){
+	if(current_process) {
+		change_kernel_rsp0(current_process->rsp0_real_addr);
+	}
+}
+
+uint64_t get_rsp0_stack(){
+	return (uint64_t)rsp0_stack+RSP0_STACK_SIZE - 16;
+}
+
+uint64_t get_kernel_cr3(){
+	return (uint64_t)kernel_page_table_PML4;
 }

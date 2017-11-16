@@ -100,6 +100,8 @@ typedef struct kmalloc_usage_entry{
 PDE* kernel_malloc_pd;
 PDE* kernel_base_pd;
 
+void* process_direct_mapping_addr;
+
 extern PML4E* kernel_page_table_PML4;
 
 void phy_page_init(uint32_t *modulep);
@@ -110,6 +112,7 @@ void dup_page_for_program(page_entry* page, m_map* map);
 void free_page_for_program(page_entry* page, m_map* map);
 
 void kernel_page_table_init();
+void change_kernel_rsp0(uint64_t change_to);
 
 void* kbrk(uint64_t size);
 

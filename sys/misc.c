@@ -61,7 +61,8 @@ int streq(char* a, char* b){
 }
 
 uint32_t strlen(char* a){
-	for(uint32_t ret = 0;*a; a++, ret++);
+	uint32_t ret = 0;
+	for(;*a; a++, ret++);
 	return ret;
 }
 

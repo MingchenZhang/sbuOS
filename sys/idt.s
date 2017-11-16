@@ -31,36 +31,18 @@ ISR_HANDLER_WRAPER:
 	pushq %r8
 	pushq %r9
 	pushq %rbp 
+	
 	# when changed: also change those: two lines below, stack creation offset in thread creation, idt.h reg struct
 	movq %rsp,%rdi # set the first argument
 	call save_current_state # pre save current process state in case isr_handler needs them
 	movq %rsp,%rdi # set the first argument
 	call isr_handler
-	cmpq $128, 72(%rsp) # if syscall
-	je ISR_HANDLER_WRAPER_context_switch
-	cmpq $32, 72(%rsp) # if timer
-	je ISR_HANDLER_WRAPER_context_switch
-	jmp ISR_HANDLER_WRAPER_not_context_switch
-	ISR_HANDLER_WRAPER_context_switch:
-	call process_schedule
-	# start context switch
-	movq 112(%rsp), %rdi
-	call save_previous_rsp
-	movq 88(%rsp), %rdi
-	call save_previous_rip
-	movq %rsp,%rdi # set the first argument
-	call save_previous_registers
+	cmpq $1, %rax # if need to context switch
+	jne AFTER_CONTEXT_SWITCH
+	int $0x81
+	.global AFTER_CONTEXT_SWITCH
+	AFTER_CONTEXT_SWITCH:
 	
-	call load_current_cr3
-	movq %rax, %r9
-	call load_current_rsp
-	movq %rax, 112(%rsp)
-	call load_current_rip
-	movq %rax, 88(%rsp)
-	movq %rsp,%rdi # set the first argument
-	call load_previous_registers
-	movq %r9, %cr3 # context switch
-	ISR_HANDLER_WRAPER_not_context_switch:
 	popq %rbp
 	popq %r9
 	popq %r8
@@ -108,3 +90,68 @@ MAKE_ISR_HANDLER 31
 MAKE_ISR_HANDLER 32
 MAKE_ISR_HANDLER 33
 MAKE_ISR_HANDLER 128
+
+# setup context switch handler
+.global isr129
+.type isr129, @function
+isr129:
+	pushq $0
+	pushq $0x81
+	pushq %rdi
+	pushq %rsi
+	pushq %rbx
+	pushq %rdx
+	pushq %rcx
+	pushq %rax
+	pushq %r8
+	pushq %r9
+	pushq %rbp 
+	
+	movq %cr3, %rdi
+	call save_current_cr3
+	movq %rsp,%rdi
+	call save_current_rsp
+	call process_schedule
+	call load_current_cr3
+	movq %rax,%rbp
+	call load_current_rsp
+	movq %rax, %rsp
+	movq %rbp, %cr3
+	
+	popq %rbp
+	popq %r9
+	popq %r8
+	popq %rax
+	popq %rcx
+	popq %rdx
+	popq %rbx
+	popq %rsi
+	popq %rdi
+	addq $16 ,%rsp
+	iretq
+
+.global kernel_space_handler_wrapper
+.type kernel_space_handler_wrapper, @function
+kernel_space_handler_wrapper:
+	# get current rsp and put in register
+	movq %rsp, %r8
+	# get and set kernel handler stack start
+	call get_rsp0_stack
+	movq %rax, %rsp
+	# push current rsp to stack
+	pushq %r8
+	# push current cr3 to stack
+	movq %cr3, %r8
+	pushq %r8
+	# get and set kernel cr3 
+	call get_kernel_cr3
+	movq %rax, %cr3
+	# call the kernel_space_handler
+	call kernel_space_handler
+	# pop cr3 to register
+	popq %r8
+	movq %r8, %cr3
+	# pop rsp to register
+	popq %rsp
+	retq
+	

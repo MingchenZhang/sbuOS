@@ -60,3 +60,19 @@ uint64_t tarfs_find_offset(char* file_path){
 	}
 	return 0;
 }
+
+tar_file_info tarfs_file_info(char* file_path){
+	tar_file_info info;
+	void* cursor = tarfs_start;
+	while((void*)cursor<tarfs_end){
+		int64_t file_size = read_oct(((posix_header_ustar*)cursor)->size);
+		if(streq(((posix_header_ustar*)cursor)->name, file_path)){
+			info.mem_offset = (uint64_t)(cursor + 512);
+			info.size = file_size;
+			return info;
+		}
+		cursor += ((((file_size-1)>>9)+1)<<9) + 512;
+	}
+	info.mem_offset = 0;
+	return info;
+}

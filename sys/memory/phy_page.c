@@ -151,7 +151,10 @@ void dup_page_for_program(page_entry* page, m_map* map){
 }
 
 void free_page_for_program(page_entry* page, m_map* map){
-	assert(page->used_by == 3, "free_page_for_program: page is not a user program page\n");
+	if(!(page->used_by == 3)){
+		kprintf("free_page_for_program: page is not a user program page (type:%d)\n", page->used_by);
+		while(1);
+	}
 	page_use_record* cursor = page->use_record;
 	assert(cursor != 0, "free_page_for_program: use_record is empty\n");
 	if((m_map*)cursor->pt == map){
@@ -205,6 +208,12 @@ void kernel_page_table_init(){
 	pml1->US = 0;
 	pml1->PDPE_addr = (uint64_t)PDP1 >> 12;
 	
+	PML4E* pml3 = PML4 + 509; // upper pml4 entry
+	pml3->P = 1;
+	pml3->RW = 1;
+	pml3->US = 0;
+	pml3->PDPE_addr = (uint64_t)0 >> 12; // direct simple map
+	
 	PML4E* pml2 = PML4 + 0; // lower pml4 entry
 	pml2->P = 1;
 	pml2->RW = 1;
@@ -218,18 +227,18 @@ void kernel_page_table_init(){
 	pdp1->PS = 0;
 	pdp1->PDPE_addr = (uint64_t)kernel_base_pd >> 12; // points to the start of the memory
 	
-	PDPE* pdp3 = PDP1 + 510; // kmalloc pdp entry
-	pdp3->P = 1;
-	pdp3->RW = 1;
-	pdp3->US = 0;
-	pdp3->PDPE_addr = (uint64_t)PD >> 12;
-	
-	PDPE* pdp2 = PDP2 + 0; // lower pdp entry // TODO: may create more for more than 1GB access
+	PDPE* pdp2 = PDP1 + 510; // kmalloc pdp entry
 	pdp2->P = 1;
 	pdp2->RW = 1;
 	pdp2->US = 0;
-	pdp2->PS = 0;
-	pdp2->PDPE_addr = (uint64_t)kernel_base_pd >> 12;
+	pdp2->PDPE_addr = (uint64_t)PD >> 12;
+	
+	PDPE* pdp4 = PDP2 + 0; // lower pdp entry // TODO: may create more for more than 1GB access
+	pdp4->P = 1;
+	pdp4->RW = 1;
+	pdp4->US = 0;
+	pdp4->PS = 0;
+	pdp4->PDPE_addr = (uint64_t)kernel_base_pd >> 12;
 	
 	PDE* pd0 = PD + 0; // kmalloc pd entry
 	pd0->P = 1;
@@ -247,39 +256,17 @@ void kernel_page_table_init(){
 	
 	kernel_page_table_PML4 = PML4;
 	
-	// // switch to the new page table
-	// kprintf("showing old cr3\n");
-	// uint64_t old_cr3;
-	// __asm__ volatile("movq %%cr3, %0;":"=r"(old_cr3));
-	// kprintf("0: %p, ", old_cr3);
-	// uint64_t _pdp1 = (((uint64_t*)((uint64_t)old_cr3 & 0xFFFFFFFFFF000))[511]);
-	// uint64_t _pd1 = (((uint64_t*)(_pdp1 & 0xFFFFFFFFFF000))[511]);
-	// uint64_t _pt1 = (((uint64_t*)(_pd1 & 0xFFFFFFFFFF000))[1]);
-	// kprintf("1: %p, ",  _pdp1);
-	// kprintf("2: %p, ", _pd1);
-	// kprintf("3: %p, ", _pt1);
-	// kprintf("applying new cr3. ");
-	// kprintf("0: %p, ", PML4);
-	// _pdp1 = (((uint64_t*)((uint64_t)PML4 & 0xFFFFFFFFFF000))[511]);
-	// _pd1 = (((uint64_t*)(_pdp1 & 0xFFFFFFFFFF000))[511]);
-	// _pt1 = (((uint64_t*)(_pd1 & 0xFFFFFFFFFF000))[1]);
-	// kprintf("1: %p, ",  _pdp1);
-	// kprintf("2: %p, ", _pd1);
-	// kprintf("3: %p, ", _pt1);
-	// uint64_t rsp;
-	// __asm__ volatile("movq %%rsp, %0;":"=r"(rsp));
-	// kprintf("rsp: %p, ",  rsp);
+	process_direct_mapping_addr = (void*)0xFFFFFF0000000000; // direct simple map
+	
 	__asm__ volatile("movq %0, %%cr3"::"r"((uint64_t)PML4));
-	// void* c1 = (void*)0x1373000;
-	// void* c2 = (void*)0x1374000;
-	// void* c3 = (void*)0x1375000;
-	// memcpy(c1, (void*)0x3f000, 4096);
-	// memcpy(c2, (void*)0x40000, 4096);
-	// memcpy(c3, (void*)0x41000, 4096);
-	// __asm__ volatile("movq %0, %%cr3"::"r"(((uint64_t)c1)&0xfffffffffffff000));
-	// *((uint8_t*)0xFFFFFFFFC00B8000) = 'D';
-	// __asm__ volatile("hlt;");
 	kprintf("kernel page table initialized\n");
+}
+
+void change_kernel_rsp0(uint64_t change_to){
+	PTE* pt1 = (PTE*)0xFFFFFFFF7FFFF000 + 510;
+	kprintf("change_kernel_rsp0: get address, try to read: %x\n", *(uint64_t*)pt1);
+	kprintf("change_kernel_rsp0: read done, try to write: %x\n", change_to);
+	pt1->PDPE_addr = change_to >> 12;
 }
 
 static void move_kbrk(PDE* pd, PTE* pt){

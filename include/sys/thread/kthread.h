@@ -14,28 +14,35 @@ typedef struct m_map m_map;
 
 #define USER_STACK_SEGMENT_SELECTOR 0x23
 #define USER_CODE_SEGMENT_SELECTOR 0x1b
-#define PROCESS_INITIAL_RSP 0xFFFFFFFF7FFFFFE0
+#define KERNEL_STACK_SEGMENT_SELECTOR 0x10
+#define KERNEL_CODE_SEGMENT_SELECTOR 0x08
+#define EFLAG_NO_INTERRUPT 0x200046
+#define EFLAG_INTERRUPT 0x200216
+#define RPOCESS_RSP0_SIZE 4096
 
 struct Process{
 	uint32_t id;
 	char* name;
 	uint64_t cr3;
+	uint64_t curr_cr3;
 	struct Process* next;
 	uint64_t rsp;
 	uint64_t rip;
 	reg_saved reg;
-	uint64_t rsp_current;
+	handler_reg saved_reg;
+	uint64_t rsp_current; // location of current stack boundary (to identify page fault near stack boundary)
 	uint64_t heap_start;
 	uint64_t heap_break;
 	unsigned char on_hold: 1;
 	unsigned char terminated: 1;
 	unsigned char cleaned: 1;
 	uint64_t ret_value;
+	uint64_t rsp0_real_addr;
 	m_map* first_map;
 };
 
 struct m_map{
-	char type; // 0: undefined, 1: program page table, 2: program accesible page, 3:pml4 page table
+	char type; // 0: undefined, 1: program page table, 2: program accesible page, 3:pml4 page table, 4: rsp0 stack
 	page_entry* phy_page;
 	uint64_t vir_addr;
 	Process* proc;
@@ -54,10 +61,12 @@ extern Process* first_process;
 extern Process* current_process;
 extern Process* previous_process;
 
-void test_spawn_process(void* initial_stack, uint64_t stack_size);
-void test_spawn_process_elf(program_section* section, char* elf_file_path);
+void* process_rsp0_start;
+void* process_initial_rsp;
 
-void* add_page_for_process(Process* proc, uint64_t new_address, char rw);
+void init_process();
+
+void* add_page_for_process(Process* proc, uint64_t new_address, char rw, char map_type);
 void spawn_process(program_section* section, char* elf_file_path);
 
 Process* fork_process(Process* parent);
@@ -71,11 +80,17 @@ void add_kernel_thread_to_process_list();
 void process_schedule();
 void switch_process();
 void save_current_state(handler_reg volatile reg);
+void save_current_cr3(uint64_t cr3);
 void save_previous_rsp(uint64_t rsp);
 void save_previous_rip(uint64_t rip);
 void save_previous_registers(handler_reg volatile reg);
 uint64_t load_current_rsp();
 uint64_t load_current_cr3();
 void load_previous_registers(handler_reg volatile reg);
+void save_current_states(handler_reg volatile reg);
+void load_current_states(handler_reg volatile reg);
+void load_current_rsp0_to_kernel();
+uint64_t get_rsp0_stack();
+uint64_t get_kernel_cr3();
 
 #endif

@@ -3,6 +3,7 @@
 #include <sys/defs.h>
 #include <sys/misc.h>
 #include <sys/timer.h>
+#include <sys/kprintf.h>
 
 waiter* first_waiter = 0;
 
@@ -33,6 +34,7 @@ void tick_timer_update(){
 		return;
 	}
 	if(cursor->ticks_to_wake-- == 0){
+		// kprintf("DEBUG: tick_timer_update: wake up %d\n", cursor->next->proc->id);
 		cursor->proc->on_hold = 0;
 		first_waiter = cursor->next;
 		sf_free(cursor);
@@ -41,6 +43,7 @@ void tick_timer_update(){
 	}// TODO: not yet fully exhaust the list
 	while(cursor->next){
 		if(cursor->next->ticks_to_wake-- == 0){
+			// kprintf("DEBUG: tick_timer_update: wake up %d\n", cursor->next->proc->id);
 			cursor->next->proc->on_hold = 0;
 			waiter* to_be_removed = cursor->next;
 			cursor->next = to_be_removed->next;
