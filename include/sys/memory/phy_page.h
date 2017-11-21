@@ -114,6 +114,7 @@ void free_page_for_program(page_entry* page, m_map* map);
 void kernel_page_table_init();
 void change_kernel_rsp0(uint64_t change_to);
 
+void* _kbrk(uint64_t size);
 void* kbrk(uint64_t size);
 
 uint64_t translate_cr3(uint64_t pml4, uint64_t virtual_addr);

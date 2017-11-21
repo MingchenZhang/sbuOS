@@ -1,7 +1,10 @@
-#ifndef _ELF64_H
-#define _ELF64_H
+
 
 #include <sys/defs.h>
+#include <sys/disk/file_system.h>
+
+#ifndef _ELF64_H
+#define _ELF64_H
 
 #define EI_NIDENT 16
 
@@ -51,5 +54,6 @@ typedef struct program_section{
 } program_section;
 
 program_section* read_elf_tarfs(char* file_path);
+program_section* read_elf(file_table_entry* file);
 
 #endif

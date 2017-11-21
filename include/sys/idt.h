@@ -19,6 +19,10 @@ struct reg_saved{
 	uint64_t rbp, r9, r8, rax, rcx, rdx, rbx, rsi, rdi;
 };
 
+struct kernel_task_return_reg{
+	uint64_t cr3, rsp;
+};
+
 typedef struct kernel_space_task{
 	int type;
 	uint64_t param[6];
@@ -30,6 +34,9 @@ kernel_space_task kernel_space_task_file;
 #define TASK_REG_WAIT 3
 #define TASK_PROC_PAGE_FAULT_HANDLE 4
 #define TASK_PROC_CLEANUP 5
+#define TASK_KEYBOARD_HANDLE 6
+#define TASK_KBRK 7
+#define TASK_REPLACE_PROCESS 8
 
 int64_t isr_handler(handler_reg);
 

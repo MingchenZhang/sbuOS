@@ -3,7 +3,7 @@
 #include <sys/thread/kthread.h>
 #include <sys/misc.h>
 #include <sys/kprintf.h>
-
+#include <sys/idt.h>
 
 
 
@@ -292,7 +292,7 @@ static void move_kbrk(PDE* pd, PTE* pt){
 	}
 }
 
-static void* _kbrk(uint64_t size){
+void* _kbrk(uint64_t size){
 	// kprintf("DEBUG: _kbrk %d\n", size);
 	if(size > 4096){
 		kprintf("PANIC: _kbrk not yet support multiple pages\n");
@@ -328,12 +328,22 @@ void* kbrk(uint64_t size) {
 		kprintf("PANIC: kbrk could not allocate non 4096 aligned space\n");
 		panic_halt();
 	}
-	if(size == 0) return _kbrk(0);
-	void* ret = _kbrk(4096);
-	for(size-=4096;size>0; size -= 4096){
-		_kbrk(4096);
+	uint64_t program_cr3;
+	__asm__ volatile("movq %%cr3, %0":"=r"(program_cr3):);
+	if((program_cr3 & ~(0xFFF)) == (uint64_t)kernel_page_table_PML4){
+		// already in kernel page table
+		if(size == 0) return _kbrk(0);
+		void* ret = _kbrk(4096);
+		for(size-=4096;size>0; size -= 4096){
+			_kbrk(4096);
+		}
+		return ret;
+	}else{
+		kernel_space_task_file.type = TASK_KBRK;
+		kernel_space_task_file.param[0] = size;
+		kernel_space_handler_wrapper();
+		return (void*)kernel_space_task_file.ret[0];
 	}
-	return ret;
 }
 
 uint64_t translate_cr3(uint64_t pml4, uint64_t virtual_addr){

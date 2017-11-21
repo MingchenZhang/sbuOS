@@ -146,6 +146,7 @@ kernel_space_handler_wrapper:
 	# get and set kernel cr3 
 	call get_kernel_cr3
 	movq %rax, %cr3
+	movq %rsp, %rdi # give the return point access
 	# call the kernel_space_handler
 	call kernel_space_handler
 	# pop cr3 to register

@@ -1,45 +1,4 @@
-void sys_print(char* str){
-	__asm__ volatile (
-		"movq $253, %%rdi;"
-		"movq %0, %%rsi;"
-		"int $0x80;"
-		::"r"((unsigned long)str):"rsi", "rdi");
-}
-
-void sys_print_num(unsigned long num){
-	__asm__ volatile (
-		"movq $252, %%rdi;"
-		"movq %0, %%rsi;"
-		"int $0x80;"
-		::"r"(num):"rsi", "rdi");
-}
-
-long sys_test_fork(){
-	long ret;
-	__asm__ volatile (
-		"movq $1, %%rdi;"
-		"int $0x80;"
-		"movq %%rax, %0;"
-		:"=r"(ret)
-	);
-	return ret;
-}
-
-void sys_test_exit(){
-	__asm__ volatile (
-		"movq $2, %%rdi;"
-		"int $0x80;"
-		::);
-}
-
-void sys_test_wait(long sec){
-	__asm__ volatile (
-		"movq $254, %%rdi;"
-		"movq %0, %%rsi;"
-		"int $0x80;"
-		::"r"(sec):"rsi", "rdi"
-	);
-}
+#include <syscall_test.h>
 
 void stack(int count){
 	char volatile space[3000];
@@ -52,12 +11,17 @@ void stack(int count){
 		sys_print("rsp reaches ");
 		sys_print_num(rsp);
 		sys_print("\n");
-		sys_test_wait(1);
 		stack(space[0]-1);
 	}
 }
 
 int main(int argc, char**argv){
-	stack(5);
+	char buffer[4];
+	int readed;
+	while(1){
+		readed = sys_test_read(0, buffer, 1);
+		if(readed == 0) break;
+		sys_test_write(1, buffer, 1);
+	}
 	sys_test_exit();
 }

@@ -27,49 +27,86 @@ file_table_entry* file_open_read(char* path){
 	}
 }
 
+void generate_entry_pair(file_table_entry** assign_to){
+	file_table_entry* file_in = sf_calloc(sizeof(file_table_entry), 1);
+	file_in->io_type = 1;
+	file_in->path_str = "entry_pair_in";
+	file_in->open_count = 1;
+	file_in->buffer_p_c = 1; // where producer is going to produced at
+	file_in->buffer_c_c = 0; // where consumer has consumed
+	file_table_entry* file_out = sf_calloc(sizeof(file_table_entry), 1);
+	file_out->io_type = 2;
+	file_out->path_str = "entry_pair_out";
+	file_out->open_count = 1;
+	file_out->buffer_p_c = 1; // where producer is going to produced at
+	file_out->buffer_c_c = 0; // where consumer has consumed
+	file_out->in_from = (uint64_t)file_in;
+	file_in->out_to = (uint64_t)file_out;
+	assign_to[0] = file_out;
+	assign_to[1] = file_in;
+}
+
 // return -1:error, positive int: available now, -2: available later
 // max read: BUFFER_SIZE at a time, multiple read should be implemeted at a higher level
-int file_read(file_table_entry* file, Process* initiator, uint64_t size){
+int file_read(file_table_entry* file, Process* initiator, uint8_t* read_buffer, uint64_t size){
 	if(file->io_type == 3){ // tarfs read
 		tar_file_info info = tarfs_file_info(file->path_str);
 		int read_count = 0;
-		for(; file->offset < info.size; file->offset++, read_count++){
-			if(file->buffer_p_c == file->buffer_c_c){ // if the buffer is full
-				return read_count;
-			}
-			file->buffer[file->buffer_p_c] = ((uint8_t*)file->in_from)[file->offset];
-			file->buffer_p_c++;
-			if(file->buffer_p_c == BUFFER_SIZE) file->buffer_p_c = 0;
+		for(; file->offset < info.size && file->offset < size; file->offset++, read_count++){
+			read_buffer[read_count] = ((uint8_t*)file->in_from)[file->offset];
 		}
 		return read_count;
 	}else if(file->io_type == 2){ // entry pair read
-		int pc = file->buffer_p_c;
-		int cc = file->buffer_c_c;
-		if(pc <= cc){
-			pc += 4096;
+		int read_count = 0;
+		for(; file->buffer_p_c-1 != file->buffer_c_c && size!=0; size--, read_buffer++, read_count++){
+			file->buffer_c_c++;
+			if(file->buffer_c_c == BUFFER_SIZE) file->buffer_c_c = 0;
+			*read_buffer = file->buffer[file->buffer_c_c];
 		}
-		return pc-cc-1;
+		return read_count;
 	}else{
 		kprintf("file_read not yet supports io_type:%d\n", file->io_type);
-		return 0;
+		return -1;
 	}
 }
 
 // return -1: error, positive int: available now, -2: availabel later
 int file_write(file_table_entry* file, Process* initiator, uint8_t* buffer_in, uint64_t size){
 	if(file->io_type == 1){ // entry pair write
+		file_table_entry* out_to = (file_table_entry*)file->out_to;
+		assert(out_to != 0, "assert: file_write: file->out_to is null\n");
 		int read_count = 0;
 		for(; read_count < size; read_count++){
-			if(file->buffer_p_c == file->buffer_c_c){ // if the buffer is full
+			if(out_to->buffer_p_c == out_to->buffer_c_c){ // if the buffer is full
 				return read_count;
 			}
-			file->buffer[file->buffer_p_c] = buffer_in[read_count];
-			file->buffer_p_c++;
-			if(file->buffer_p_c == BUFFER_SIZE) file->buffer_p_c = 0;
+			out_to->buffer[out_to->buffer_p_c] = buffer_in[read_count];
+			out_to->buffer_p_c++;
+			if(out_to->buffer_p_c == BUFFER_SIZE) out_to->buffer_p_c = 0;
 		}
+		// wake up all waiter
+		file_table_waiting* cursor = ((file_table_entry*)(file->out_to))->first_waiters;
+		while(cursor){
+			cursor->waiter->on_hold = 0;
+			file_table_waiting* to_be_free = cursor;
+			cursor = cursor->next;
+			sf_free(to_be_free);
+		}
+		file->first_waiters = 0;
 		return read_count;
 	}else{
 		kprintf("file_read not yet supports io_type:%d\n", file->io_type);
-		return 0;
+		return -1;
 	}
+}
+
+void file_set_offset(file_table_entry* file, uint64_t offset){
+	file->offset = offset;
+}
+
+int file_close(file_table_entry* file){
+	if(--file->open_count <= 0){
+		sf_free(file);
+	}
+	return 1;
 }

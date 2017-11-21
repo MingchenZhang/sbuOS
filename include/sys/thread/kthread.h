@@ -11,6 +11,10 @@ typedef struct m_map m_map;
 #include <sys/elf64.h>
 #include <sys/memory/phy_page.h>
 #include <sys/idt.h>
+#include <sys/disk/file_system.h>
+#include <sys/elf64.h>
+
+#define FD_SIZE 16
 
 #define USER_STACK_SEGMENT_SELECTOR 0x23
 #define USER_CODE_SEGMENT_SELECTOR 0x1b
@@ -20,15 +24,17 @@ typedef struct m_map m_map;
 #define EFLAG_INTERRUPT 0x200216
 #define RPOCESS_RSP0_SIZE 4096
 
+typedef struct open_file_descriptor {
+	file_table_entry* file_entry;
+} open_file_descriptor;
+
 struct Process{
 	uint32_t id;
 	char* name;
 	uint64_t cr3;
-	uint64_t curr_cr3;
 	struct Process* next;
 	uint64_t rsp;
 	uint64_t rip;
-	reg_saved reg;
 	handler_reg saved_reg;
 	uint64_t rsp_current; // location of current stack boundary (to identify page fault near stack boundary)
 	uint64_t heap_start;
@@ -37,12 +43,12 @@ struct Process{
 	unsigned char terminated: 1;
 	unsigned char cleaned: 1;
 	uint64_t ret_value;
-	uint64_t rsp0_real_addr;
 	m_map* first_map;
+	open_file_descriptor* open_fd[FD_SIZE];
 };
 
 struct m_map{
-	char type; // 0: undefined, 1: program page table, 2: program accesible page, 3:pml4 page table, 4: rsp0 stack
+	char type; // 0: undefined, 1: program page table, 2: program accesible page, 3:kernel page table, 4: rsp0 stack
 	page_entry* phy_page;
 	uint64_t vir_addr;
 	Process* proc;
@@ -71,6 +77,8 @@ void spawn_process(program_section* section, char* elf_file_path);
 
 Process* fork_process(Process* parent);
 
+void replace_process(Process* proc, program_section* section);
+
 void process_cleanup(Process* proc);
 
 int check_and_handle_rw_page_fault(Process* proc, uint64_t addr/* accessed address */);
@@ -83,13 +91,8 @@ void save_current_state(handler_reg volatile reg);
 void save_current_cr3(uint64_t cr3);
 void save_previous_rsp(uint64_t rsp);
 void save_previous_rip(uint64_t rip);
-void save_previous_registers(handler_reg volatile reg);
 uint64_t load_current_rsp();
 uint64_t load_current_cr3();
-void load_previous_registers(handler_reg volatile reg);
-void save_current_states(handler_reg volatile reg);
-void load_current_states(handler_reg volatile reg);
-void load_current_rsp0_to_kernel();
 uint64_t get_rsp0_stack();
 uint64_t get_kernel_cr3();
 

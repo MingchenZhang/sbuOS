@@ -8,6 +8,8 @@
 #include <sys/timer.h>
 #include <sys/config.h>
 #include <sys/memory/phy_page.h>
+#include <sys/terminal.h>
+#include <sys/memory/kmalloc.h>
 
 #define IRQ0 32
 #define IRQ1 33
@@ -166,21 +168,19 @@ int64_t isr_handler(handler_reg volatile reg){
 	if(reg.int_num == IRQ0){ // timer interrupt (from PIT)
 		kernel_space_task_file.type = TASK_TIMER_TICK;
 		kernel_space_handler_wrapper();
+		// also update terminal out
+		update_terminal_out();
 		ret = 1; // will trigger context switch
 	}else if(reg.int_num == IRQ1){ // keyboard interrupt
-		// kprintf("keyboard interrupt received\n");
-		uint8_t c = asm_inb(0x60);
-		// kprintf("Keyboard scan code: %x\n", c);
-		handle_keyboard_scan_code(c);
+		kernel_space_task_file.type = TASK_KEYBOARD_HANDLE;
+		kernel_space_handler_wrapper();
 	}else if(reg.int_num == 0x80){
 		if(!current_process){
 			ret = 1;
 			goto finally;
 		}
-		// change_kernel_rsp0(current_process->rsp0_real_addr);
-		// __asm__ volatile("movq %0, %%cr3"::"r"((uint64_t)kernel_page_table_PML4)); // return to kernel page table for complex op
 		// syscall return must be written back to reg.rax
-		if(reg.rdi == 1){
+		if(reg.rax == 1){
 			// fork
 			kprintf("syscall: fork called\n");
 			// store the context on process structure
@@ -191,33 +191,132 @@ int64_t isr_handler(handler_reg volatile reg){
 			reg.rax = new_p->id;
 			kprintf("DEBUG: fork complete with new child id: %d\n", new_p->id);
 			ret = 1;
-		}else if(reg.rdi == 2){
+		}else if(reg.rax == 2){
 			// exit
 			kprintf("syscall: exit called\n");
 			current_process->on_hold = 1;
 			current_process->terminated = 1;
 			ret = 1;
 			// kprintf("syscall: exit complete\n");
-		}else if(reg.rdi == 3){
+		}else if(reg.rax == 3){
 			// exec
 			kprintf("syscall: exec called\n");
-			
-		}else if(reg.rdi == 251){
+			char* path = (char*)(uint64_t*)reg.rdi;
+			// read the elf file sections into memory
+			file_table_entry* file = file_open_read(path); // TODO: this needs to be a kernel task
+			if(!file){
+				reg.rax = 1;
+				goto sys_call_finally;
+			}
+			program_section* sections = read_elf(file);
+			kernel_space_task_file.type = TASK_REPLACE_PROCESS;
+			kernel_space_task_file.param[0] = (uint64_t) current_process;
+			kernel_space_task_file.param[1] = (uint64_t) sections;
+			kernel_space_handler_wrapper();
+			// restore program sections
+			// alloc data pages
+			program_section* section_cursor = sections;
+			while(section_cursor){
+				uint64_t prog_disk = section_cursor->file_offset;
+				uint64_t prog_mem = section_cursor->memory_offset;
+				uint64_t to_read = 0;
+				uint64_t remain = section_cursor->size;
+				for(; remain != 0; 
+					prog_disk += to_read, prog_mem += to_read, remain -= to_read){
+					to_read = math_min(4096, 4096-(prog_mem % 4096), remain, (uint64_t)-1);
+					// void* new_page = add_page_for_process(new_p, prog_mem, 1, 2);
+					file_set_offset(file, prog_disk);
+					if(file_read(file, current_process, (uint8_t*)(uint64_t*)prog_mem, to_read) < to_read){
+						kprintf("ERROR: cannot read enough segment from elf file\n");
+						while(1); // TODO: clean up and return instead of hung
+					}
+				}
+				section_cursor = section_cursor->next;
+			}
+			ret = 1;
+		}else if(reg.rax == 4){
+			// read
+			uint64_t fd = reg.rdi;
+			uint64_t buffer = reg.rsi;
+			uint64_t to_write = reg.rdx;
+			if(fd >= FD_SIZE){
+				reg.rax = (uint64_t)-1;
+				goto sys_call_finally;
+			}
+			open_file_descriptor* file = current_process->open_fd[fd];
+			if(!file || !file->file_entry){
+				reg.rax = (uint64_t)-2;
+				goto sys_call_finally;
+			}
+			file_table_entry* file_entry = file->file_entry;
+			if(file_entry->io_type != 2 && file_entry->io_type != 3 && file_entry->io_type != 5){
+				reg.rax = (uint64_t)-3;
+				goto sys_call_finally;
+			}
+			int written;
+			while(1){
+				written = file_read(file_entry, current_process, (uint8_t*)(uint64_t*)buffer, to_write);
+				// assume the file pair has not been closed
+				if(written == 0){
+					// TODO: make sf_malloc kernel task
+					// TODO: increment open count on file before sleep
+					file_table_waiting* waiter = sf_calloc(sizeof(file_table_waiting), 1);
+					waiter->waiter = current_process;
+					if(!file_entry->first_waiters){
+						file_entry->first_waiters = waiter;
+					}else{
+						file_table_waiting* cursor = file_entry->first_waiters;
+						while(cursor->next){
+							cursor = cursor->next;
+						}
+						cursor->next = waiter;
+					}
+					// set on_hold
+					current_process->on_hold = 1;
+					// sleep this process in kernel
+					__asm__ volatile ("int $0x81;");
+				}else{
+					break;
+				}
+			}
+			reg.rax = (uint64_t)written;
+		}else if(reg.rax == 5){
+			// write
+			uint64_t fd = reg.rdi;
+			uint64_t buffer = reg.rsi;
+			uint64_t to_read = reg.rdx;
+			if(fd >= FD_SIZE){
+				reg.rax = (uint64_t)-1;
+				goto sys_call_finally;
+			}
+			open_file_descriptor* file = current_process->open_fd[fd];
+			if(!file || !file->file_entry){
+				reg.rax = (uint64_t)-2;
+				goto sys_call_finally;
+			}
+			file_table_entry* file_entry = file->file_entry;
+			if(file_entry->io_type != 1 && file_entry->io_type != 4 && file_entry->io_type != 6){
+				reg.rax = (uint64_t)-3;
+				goto sys_call_finally;
+			}
+			int readed = file_write(file_entry, current_process, (uint8_t*)(uint64_t*)buffer, to_read);
+			reg.rax = (uint64_t)readed;
+		}else if(reg.rax == 251){
 			// test_kernel_wait
 			kernel_space_task_file.type = TASK_REG_WAIT;
-			kernel_space_task_file.param[0] = reg.rsi * PIT_FREQUENCY;
+			kernel_space_task_file.param[0] = reg.rdi * PIT_FREQUENCY;
 			kernel_space_handler_wrapper();
 			current_process->on_hold = 1;
 			// kprintf("DEBUG: kernel wait starts\n");
 			__asm__ volatile ("int $0x81;");
 			// kprintf("DEBUG: kernel wait ends\n");
-		}else if(reg.rdi == 252){
+		}else if(reg.rax == 252){
 			// test_print
-			uint64_t num = reg.rsi;
+			uint64_t num = reg.rdi;
 			kprintf("%x", num);
-		}else if(reg.rdi == 253){
+		}else if(reg.rax == 253){
 			// test_print
-			char* string_addr = (char*)reg.rsi;
+			char* string_addr = (char*)reg.rdi;
 			if(!string_addr){
 				kprintf("DEBUG: invalid string address, %x\n", string_addr);
 				goto sys_call_finally;
@@ -226,10 +325,10 @@ int64_t isr_handler(handler_reg volatile reg){
 				if(*(string_addr+i) == 0) break;
 				kprintf("%c", *(string_addr+i));
 			}
-		}else if(reg.rdi == 254){
+		}else if(reg.rax == 254){
 			// test_wait
 			kernel_space_task_file.type = TASK_REG_WAIT;
-			kernel_space_task_file.param[0] = reg.rsi * PIT_FREQUENCY;
+			kernel_space_task_file.param[0] = reg.rdi * PIT_FREQUENCY;
 			kernel_space_handler_wrapper();
 			current_process->on_hold = 1;
 			ret = 1;
@@ -237,7 +336,6 @@ int64_t isr_handler(handler_reg volatile reg){
 			kprintf("WARNING: syscall undefined called\n");
 		}
 		sys_call_finally:
-		// __asm__ volatile("movq %0, %%cr3"::"r"((uint64_t)current_process->cr3)); 
 		// ret = 1; // will trigger context switch
 		goto finally;
 	}else if(reg.int_num == 13){
@@ -265,7 +363,7 @@ int64_t isr_handler(handler_reg volatile reg){
 	return ret;
 }
 
-void kernel_space_handler(){
+void kernel_space_handler(struct kernel_task_return_reg reg){
 	if(kernel_space_task_file.type == TASK_TIMER_TICK){
 		pic_tick_count++;
 		test_tick_handle();
@@ -295,5 +393,23 @@ void kernel_space_handler(){
 	}else if(kernel_space_task_file.type == TASK_PROC_CLEANUP){
 		Process* proc = (Process*)kernel_space_task_file.param[0];
 		process_cleanup(proc);
+	}else if(kernel_space_task_file.type == TASK_KEYBOARD_HANDLE){
+		uint8_t c = asm_inb(0x60);
+		handle_keyboard_scan_code(c);
+	}else if(kernel_space_task_file.type == TASK_KBRK){
+		uint64_t size = kernel_space_task_file.param[0];
+		if(size == 0) {
+			kernel_space_task_file.ret[0] = (uint64_t)_kbrk(0);
+			return;
+		}
+		void* ret = _kbrk(4096);
+		for(size-=4096;size>0; size -= 4096){
+			_kbrk(4096);
+		}
+		kernel_space_task_file.ret[0] = (uint64_t)ret;
+	}else if(kernel_space_task_file.type == TASK_REPLACE_PROCESS){
+		Process* proc = (Process*)kernel_space_task_file.param[0];
+		program_section* sections = (program_section*)kernel_space_task_file.param[1];
+		replace_process(proc, sections);
 	}
 }
