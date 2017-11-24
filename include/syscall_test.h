@@ -13,3 +13,5 @@ void sys_test_wait(long sec);
 unsigned long sys_test_read(unsigned long fd, void* buffer, unsigned long size);
 
 unsigned long sys_test_write(unsigned long fd, void* buffer, unsigned long size);
+
+unsigned long sys_test_exec(char* path);

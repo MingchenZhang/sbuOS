@@ -18,6 +18,7 @@ void stack(int count){
 int main(int argc, char**argv){
 	char buffer[4];
 	int readed;
+	sys_test_write(1, "test.c\n", 7);
 	while(1){
 		readed = sys_test_read(0, buffer, 1);
 		if(readed == 0) break;

@@ -282,6 +282,7 @@ void spawn_process(program_section* section, char* elf_file_path){
 		}
 		cursor->next = new_p;
 	}
+	kprintf("DEBUG: thread spawned, cr3: %x\n", PML4);
 }
 
 void* dup_page_for_process(Process* proc_dest, uint64_t new_address, char rw, page_entry* ptr_to){
@@ -434,7 +435,7 @@ Process* fork_process(Process* parent){
 	reg->rbp = parent->saved_reg.rbp;
 	reg->r9  = parent->saved_reg.r9 ;
 	reg->r8  = parent->saved_reg.r8 ;
-	reg->rax = parent->saved_reg.rax;
+	reg->rax = 0;
 	reg->rcx = parent->saved_reg.rcx;
 	reg->rdx = parent->saved_reg.rdx;
 	reg->rbx = parent->saved_reg.rbx;
@@ -450,6 +451,7 @@ Process* fork_process(Process* parent){
 		cursor->next = new_p;
 	}
 	
+	kprintf("DEBUG: thread forked, cr3: %x\n", PML4);
 	return new_p;
 }
 
@@ -471,7 +473,7 @@ void replace_process(Process* proc, program_section* section){
 	map_cur = proc->first_map;
 	while(map_cur){
 		m_map* next = map_cur->next;
-		sf_free(map_cur);
+		if(map_cur->type != 4) sf_free(map_cur);
 		map_cur = next;
 	}
 	
@@ -567,6 +569,8 @@ void replace_process(Process* proc, program_section* section){
 	reg->eflags = EFLAG_INTERRUPT; // enable interrupt
 	reg->ret_rsp = (uint64_t)(process_initial_rsp - 16);
 	reg->ret_rip = section->entry_point;
+	
+	kprintf("DEBUG: thread replaced, cr3: %x\n", PML4);
 }
 
 void process_cleanup(Process* proc){
@@ -608,7 +612,8 @@ int check_and_handle_rw_page_fault(Process* proc, uint64_t addr/* accessed addre
 		if((curr_map->type == 2) && (curr_map->vir_addr>>12 == addr>>12)){
 			if(curr_map->rw){
 				void* new_page = add_page_for_process(proc, addr, 1, 2);
-				memcpy(new_page, curr_map->phy_page, 4096);
+				// kprintf("cow split: %x, %x, %x\n", curr_map->phy_page, new_page, addr);
+				memcpy(new_page, curr_map->phy_page->base, 4096);
 				free_page_for_program(curr_map->phy_page, curr_map);
 				map_cur->next = map_cur->next->next;
 				return 1;
@@ -660,7 +665,7 @@ void process_schedule(){
 		kprintf("PANIC: all process on hold\n");
 		panic_halt();
 	}
-	// kprintf("process_schedule next: %p\n", next);
+	// kprintf("DEBUG: process_schedule next: %p\n", next);
 	previous_process = current_process;
 	current_process = next;
 	

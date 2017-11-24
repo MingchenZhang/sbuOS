@@ -189,8 +189,8 @@ int64_t isr_handler(handler_reg volatile reg){
 			kernel_space_handler_wrapper();
 			Process* new_p = (Process*)kernel_space_task_file.ret[0];
 			reg.rax = new_p->id;
-			kprintf("DEBUG: fork complete with new child id: %d\n", new_p->id);
-			ret = 1;
+			// kprintf("DEBUG: fork complete with new child. id: %d, cr3: %x\n", new_p->id, new_p->cr3);
+			ret = 1; // also to refresh page table
 		}else if(reg.rax == 2){
 			// exit
 			kprintf("syscall: exit called\n");
@@ -209,10 +209,15 @@ int64_t isr_handler(handler_reg volatile reg){
 				goto sys_call_finally;
 			}
 			program_section* sections = read_elf(file);
+			if(!sections){
+				reg.rax = 2;
+				goto sys_call_finally;
+			}
 			kernel_space_task_file.type = TASK_REPLACE_PROCESS;
 			kernel_space_task_file.param[0] = (uint64_t) current_process;
 			kernel_space_task_file.param[1] = (uint64_t) sections;
 			kernel_space_handler_wrapper();
+			kprintf("syscall: exec process replaced\n");
 			// restore program sections
 			// alloc data pages
 			program_section* section_cursor = sections;
@@ -233,6 +238,7 @@ int64_t isr_handler(handler_reg volatile reg){
 				}
 				section_cursor = section_cursor->next;
 			}
+			kprintf("syscall: exec process loaded\n");
 			ret = 1;
 		}else if(reg.rax == 4){
 			// read
@@ -377,7 +383,7 @@ void kernel_space_handler(struct kernel_task_return_reg reg){
 		uint64_t err_num = kernel_space_task_file.param[0];
 		uint64_t requested_addr = kernel_space_task_file.param[1];
 		if(err_num == 7 && check_and_handle_rw_page_fault(current_process, requested_addr)){
-			kprintf("DEBUG: shared page duplicated\n");
+			// kprintf("DEBUG: shared page duplicated\n");
 		}else if(requested_addr < current_process->heap_break && requested_addr > current_process->heap_start){
 			// if the requested address falls in a resonable range of heap
 			add_page_for_process(current_process, requested_addr, 1, 2);

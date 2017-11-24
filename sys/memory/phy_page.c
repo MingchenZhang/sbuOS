@@ -158,10 +158,16 @@ void free_page_for_program(page_entry* page, m_map* map){
 	page_use_record* cursor = page->use_record;
 	assert(cursor != 0, "free_page_for_program: use_record is empty\n");
 	if((m_map*)cursor->pt == map){
-		// this the last free for this page, now actually free it
-		sf_free(cursor);
-		page->used_by = 0;
-		return;
+		if(cursor->next == 0){
+			// this the last free for this page, now actually free it
+			sf_free(cursor);
+			page->used_by = 0;
+			return;
+		}else{
+			page->use_record = cursor->next;
+			sf_free(cursor);
+			return;
+		}
 	}
 	// else delete from linked list
 	char found = 0;
@@ -360,17 +366,15 @@ uint64_t translate_cr3(uint64_t pml4, uint64_t virtual_addr){
 }
 
 int set_pte_rw(uint64_t pml4, uint64_t virtual_addr, char rw){
-	register uint64_t pdp = (((uint64_t*)(pml4 & 0xFFFFFFFFFF000))[(virtual_addr>>39) & 0b111111111]);
+	uint64_t pdp = (((uint64_t*)(pml4 & 0xFFFFFFFFFF000))[(virtual_addr>>39) & 0b111111111]);
 	if(!(pdp & 0x1)) return 0;
-	register uint64_t pd = (((uint64_t*)(pdp & 0xFFFFFFFFFF000))[(virtual_addr>>30) & 0b111111111]);
+	uint64_t pd = (((uint64_t*)(pdp & 0xFFFFFFFFFF000))[(virtual_addr>>30) & 0b111111111]);
 	if(!(pd & 0x1)) return 0;
-	register uint64_t pt = (((uint64_t*)(pd & 0xFFFFFFFFFF000))[(virtual_addr>>21) & 0b111111111]);
+	uint64_t pt = (((uint64_t*)(pd & 0xFFFFFFFFFF000))[(virtual_addr>>21) & 0b111111111]);
 	if(!(pt & 0x1)) return 0;
-	register uint64_t pte = (((uint64_t*)(pt & 0xFFFFFFFFFF000))[(virtual_addr>>12) & 0b111111111]);
-	if(!(pte & 0x1)) return 0;
-	if(rw) (((uint64_t*)(pt & 0xFFFFFFFFFF000))[(virtual_addr>>12) & 0b111111111]) &= 
-		0xFFFFFFFFFFFFFFFD;
-	else (((uint64_t*)(pt & 0xFFFFFFFFFF000))[(virtual_addr>>12) & 0b111111111]) |= 
-		0x2;
+	uint64_t* pte = &(((uint64_t*)(pt & 0xFFFFFFFFFF000))[(virtual_addr>>12) & 0b111111111]);
+	if(!(*pte & 0x1)) return 0;
+	if(!rw) *pte &= 0xFFFFFFFFFFFFFFFD;
+	else *pte |= 0x2;
 	return 1;
 }

@@ -50,12 +50,9 @@ void generate_entry_pair(file_table_entry** assign_to){
 // max read: BUFFER_SIZE at a time, multiple read should be implemeted at a higher level
 int file_read(file_table_entry* file, Process* initiator, uint8_t* read_buffer, uint64_t size){
 	if(file->io_type == 3){ // tarfs read
-		tar_file_info info = tarfs_file_info(file->path_str);
-		int read_count = 0;
-		for(; file->offset < info.size && file->offset < size; file->offset++, read_count++){
-			read_buffer[read_count] = ((uint8_t*)file->in_from)[file->offset];
-		}
-		return read_count;
+		int64_t readed = tarfs_read(file->path_str, read_buffer, size, file->offset);
+		file->offset += readed;
+		return readed;
 	}else if(file->io_type == 2){ // entry pair read
 		int read_count = 0;
 		for(; file->buffer_p_c-1 != file->buffer_c_c && size!=0; size--, read_buffer++, read_count++){
@@ -84,15 +81,16 @@ int file_write(file_table_entry* file, Process* initiator, uint8_t* buffer_in, u
 			out_to->buffer_p_c++;
 			if(out_to->buffer_p_c == BUFFER_SIZE) out_to->buffer_p_c = 0;
 		}
-		// wake up all waiter
+		// wake up all waiter on read side
 		file_table_waiting* cursor = ((file_table_entry*)(file->out_to))->first_waiters;
 		while(cursor){
 			cursor->waiter->on_hold = 0;
-			file_table_waiting* to_be_free = cursor;
+			file_table_waiting* volatile to_be_free = cursor;
 			cursor = cursor->next;
+			to_be_free->next = 0;
 			sf_free(to_be_free);
 		}
-		file->first_waiters = 0;
+		((file_table_entry*)(file->out_to))->first_waiters = 0;
 		return read_count;
 	}else{
 		kprintf("file_read not yet supports io_type:%d\n", file->io_type);
@@ -108,5 +106,7 @@ int file_close(file_table_entry* file){
 	if(--file->open_count <= 0){
 		sf_free(file);
 	}
+	// TODO: also free path_str
+	// TODO: wake up all waiter
 	return 1;
 }
