@@ -64,7 +64,7 @@ void test_set_ahci_hba_routine(uint16_t bus, uint8_t device, uint8_t func){ // T
 }
 
 static void* find_ahci_HBA(uint8_t bus, uint8_t dev, uint8_t func){
-	test_set_ahci_hba_routine(bus, dev, func); // TODO: remove this
+	// test_set_ahci_hba_routine(bus, dev, func); // TODO: remove this
 	uint16_t bar5_low = pci_config_read(bus, dev, func, 0x24);
 	uint16_t bar5_high = pci_config_read(bus, dev, func, 0x26);
 	// uint16_t bar4_low = pci_config_read(bus, dev, func, 0x20);

@@ -1,24 +1,27 @@
 #include <syscall_test.h>
 
-void stack(int count){
-	char volatile space[3000];
-	space[0] = count;
-	if(count < 0){
-		sys_print("done\n");
-	}else{
-		unsigned long rsp;
-		__asm__ volatile ("movq %%rsp, %0": "=r"(rsp));
-		sys_print("rsp reaches ");
-		sys_print_num(rsp);
-		sys_print("\n");
-		stack(space[0]-1);
-	}
+int strlen(char* a){
+	int ret = 0;
+	for(;*a; a++, ret++);
+	return ret;
 }
 
-int main(int argc, char**argv){
+int main(int argc, char**argv, char** envp){
 	char buffer[4];
 	int readed;
-	sys_test_write(1, "test.c\n", 7);
+	sys_test_write(1, "test.c speaking\n", 16);
+	sys_test_write(1, "I have following args\n", 22);
+	for(long i=0; argv[i]; i++){
+		int len = strlen(argv[i]);
+		sys_test_write(1, argv[i], len);
+		sys_test_write(1, "\n", 1);
+	}
+	sys_test_write(1, "I have following envp\n", 22);
+	for(long i=0; envp[i]; i++){
+		int len = strlen(envp[i]);
+		sys_test_write(1, envp[i], len);
+		sys_test_write(1, "\n", 1);
+	}
 	while(1){
 		readed = sys_test_read(0, buffer, 1);
 		if(readed == 0) break;

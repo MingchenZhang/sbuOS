@@ -14,4 +14,4 @@ unsigned long sys_test_read(unsigned long fd, void* buffer, unsigned long size);
 
 unsigned long sys_test_write(unsigned long fd, void* buffer, unsigned long size);
 
-unsigned long sys_test_exec(char* path);
+unsigned long sys_test_exec(char* path, char** argv, char** envp);

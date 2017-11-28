@@ -48,4 +48,6 @@ int file_write(file_table_entry* file, Process* initiator, uint8_t* buffer_in, u
 void file_set_offset(file_table_entry* file, uint64_t offset);
 int file_close(file_table_entry* file);
 
+char* calculate_path(char* base, char* relative_path);
+
 #endif

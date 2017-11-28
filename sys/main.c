@@ -73,11 +73,11 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 	
 	{
 		program_section* result;
-		if(!(result = read_elf_tarfs("bin/init"))) {
+		if(!(result = read_elf_tarfs("/bin/init"))) {
 			kprintf("read_elf_tarfs failed\n");
 			while(1) __asm__("hlt;");
 		}
-		spawn_process(result, "bin/init");
+		spawn_process(result, "/bin/init");
 	}
 	
 	// {

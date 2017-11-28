@@ -1,5 +1,8 @@
 #include <syscall_test.h>
 
+char* _argv[] = {0};
+char* _envp[] = {0};
+
 int main(int argc, char**argv){
 	int volatile value = 1011;
 	if(sys_test_fork()){
@@ -14,7 +17,7 @@ int main(int argc, char**argv){
 			sys_test_exit();
 		}else{
 			// child 2
-			sys_test_exec("bin/test");
+			sys_test_exec("test", _argv, _envp);
 			sys_print("sys_test_exec returned!!!\n");
 			value+= 2;
 			for(int i=0; i<2; i++){

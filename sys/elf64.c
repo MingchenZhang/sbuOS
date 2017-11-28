@@ -32,6 +32,7 @@ program_section* read_elf_tarfs(char* file_path){
 		section->file_offset = pro_buffer.p_offset;
 		section->memory_offset = pro_buffer.p_vaddr;
 		section->size = pro_buffer.p_filesz;
+		section->mem_size = pro_buffer.p_memsz;
 		section->entry_point = header->e_entry;
 		section->next = 0;
 		if(last) last->next = section;
@@ -67,6 +68,7 @@ program_section* read_elf(file_table_entry* file){
 		section->file_offset = pro_buffer.p_offset;
 		section->memory_offset = pro_buffer.p_vaddr;
 		section->size = pro_buffer.p_filesz;
+		section->mem_size = pro_buffer.p_memsz;
 		section->entry_point = header->e_entry;
 		section->next = 0;
 		if(last) last->next = section;

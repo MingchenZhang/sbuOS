@@ -110,3 +110,27 @@ int file_close(file_table_entry* file){
 	// TODO: wake up all waiter
 	return 1;
 }
+
+char* calculate_path(char* base, char* relative_path){
+	uint32_t len = strlen(relative_path);
+	if(relative_path[0] == '/'){
+		char* new_path = sf_calloc(len+1, 1);
+		memcpy(new_path, relative_path, len);
+		return new_path;
+	}else{
+		uint32_t base_len = strlen(base);
+		if(base[base_len-1] != '/'){
+			char* new_path = sf_calloc(base_len+len+2, 1);
+			memcpy(new_path, base, base_len);
+			new_path[base_len] = '/';
+			memcpy(new_path+base_len+1, relative_path, len);
+			return new_path;
+		}else{
+			char* new_path = sf_calloc(base_len+len+1, 1);
+			memcpy(new_path, base, base_len);
+			memcpy(new_path+base_len, relative_path, len);
+			return new_path;
+		}
+		
+	}
+}

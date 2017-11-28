@@ -49,6 +49,7 @@ typedef struct program_section{
 	uint64_t file_offset;
 	uint64_t memory_offset;
 	uint64_t size;
+	uint64_t mem_size;
 	uint64_t entry_point;
 	struct program_section* next;
 } program_section;

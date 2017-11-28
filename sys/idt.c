@@ -202,8 +202,12 @@ int64_t isr_handler(handler_reg volatile reg){
 			// exec
 			kprintf("syscall: exec called\n");
 			char* path = (char*)(uint64_t*)reg.rdi;
+			char** argv = (char**)(uint64_t*)reg.rsi;
+			char** envp = (char**)(uint64_t*)reg.rdx;
+			// translate relative path
+			char* abs_path = calculate_path(current_process->workdir, path);
 			// read the elf file sections into memory
-			file_table_entry* file = file_open_read(path); // TODO: this needs to be a kernel task
+			file_table_entry* file = file_open_read(abs_path); // TODO: this needs to be a kernel task
 			if(!file){
 				reg.rax = 1;
 				goto sys_call_finally;
@@ -213,9 +217,52 @@ int64_t isr_handler(handler_reg volatile reg){
 				reg.rax = 2;
 				goto sys_call_finally;
 			}
+			// start construct initial stack
+			uint64_t argc = 0;
+			uint64_t size_need = 4*8;
+			uint64_t pointer_ends = 3*8;
+			for(char** c = argv; *c!=0; c++) {
+				size_need += 9;
+				size_need += strlen(*c);
+				pointer_ends+=8;
+				argc++;
+			}
+			for(char** c = envp; *c!=0; c++) {
+				size_need += 9;
+				size_need += strlen(*c);
+				pointer_ends+=8;
+			}
+			uint64_t* initial_stack = sf_calloc(size_need, 1);
+			uint64_t* stack_cur = initial_stack;
+			uint8_t* str_cur = (uint8_t*)initial_stack + pointer_ends;
+			stack_cur[0] = argc;
+			stack_cur++;
+			for(char** c = argv; *c!=0; c++) {
+				uint64_t len = strlen(*c)+1;
+				memcpy(str_cur, *c, len);
+				stack_cur[0] = str_cur - (uint8_t*)initial_stack; // the addresses are relative now, should be changed to absolute later
+				stack_cur++;
+				str_cur += len;
+			}
+			stack_cur[0] = 0;
+			stack_cur++;
+			for(char** c = envp; *c!=0; c++) {
+				uint64_t len = strlen(*c)+1;
+				memcpy(str_cur, *c, len);
+				stack_cur[0] = str_cur - (uint8_t*)initial_stack; // the addresses are relative now, should be changed to absolute later
+				stack_cur++;
+				str_cur += len;
+			}
+			stack_cur[0] = 0;
+			stack_cur++;
+			assert(stack_cur - initial_stack == pointer_ends>>3, "ASSERT: exec initial stack size error\n");
+			// stack prepared, ready to replace program
+			kprintf("syscall: exec process replacing\n");
 			kernel_space_task_file.type = TASK_REPLACE_PROCESS;
 			kernel_space_task_file.param[0] = (uint64_t) current_process;
 			kernel_space_task_file.param[1] = (uint64_t) sections;
+			kernel_space_task_file.param[2] = (uint64_t) initial_stack;
+			kernel_space_task_file.param[3] = (uint64_t) size_need;
 			kernel_space_handler_wrapper();
 			kprintf("syscall: exec process replaced\n");
 			// restore program sections
@@ -226,8 +273,9 @@ int64_t isr_handler(handler_reg volatile reg){
 				uint64_t prog_mem = section_cursor->memory_offset;
 				uint64_t to_read = 0;
 				uint64_t remain = section_cursor->size;
+				uint64_t mem_remain = section_cursor->mem_size;
 				for(; remain != 0; 
-					prog_disk += to_read, prog_mem += to_read, remain -= to_read){
+					prog_disk += to_read, prog_mem += to_read, remain -= to_read, mem_remain -= to_read){
 					to_read = math_min(4096, 4096-(prog_mem % 4096), remain, (uint64_t)-1);
 					// void* new_page = add_page_for_process(new_p, prog_mem, 1, 2);
 					file_set_offset(file, prog_disk);
@@ -236,8 +284,29 @@ int64_t isr_handler(handler_reg volatile reg){
 						while(1); // TODO: clean up and return instead of hung
 					}
 				}
+				if(mem_remain != 0) {
+					for(; mem_remain != 0; prog_mem++, mem_remain--){
+						if(prog_mem % 0x1000 == 0){
+							assert(0, "assert: exec zero page alloc failed\n");
+						}
+						*(uint8_t*)(uint64_t*)(prog_mem) = 0;
+					}
+				}
 				section_cursor = section_cursor->next;
 			}
+			// copy initial stack
+			uint64_t* rsp = (uint64_t*)(reg.ret_rsp);
+			memcpy(rsp, initial_stack, size_need);
+			uint64_t* rsp_c = rsp+1;
+			for(; *rsp_c != 0; rsp_c++){
+				*rsp_c = *rsp_c + (uint64_t)rsp;
+			}
+			rsp_c++;
+			for(; *rsp_c != 0; rsp_c++){
+				*rsp_c = *rsp_c + (uint64_t)rsp;
+			}
+			// done
+			sf_free(abs_path);
 			kprintf("syscall: exec process loaded\n");
 			ret = 1;
 		}else if(reg.rax == 4){
@@ -416,6 +485,8 @@ void kernel_space_handler(struct kernel_task_return_reg reg){
 	}else if(kernel_space_task_file.type == TASK_REPLACE_PROCESS){
 		Process* proc = (Process*)kernel_space_task_file.param[0];
 		program_section* sections = (program_section*)kernel_space_task_file.param[1];
-		replace_process(proc, sections);
+		uint64_t* initial_stack = (uint64_t*)kernel_space_task_file.param[2];
+		uint64_t initial_stack_size = (uint64_t)kernel_space_task_file.param[3];
+		replace_process(proc, sections, initial_stack, initial_stack_size);
 	}
 }

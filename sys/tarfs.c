@@ -36,7 +36,7 @@ int64_t tarfs_read(char* file_path, void* buffer, int64_t size, int64_t offset){
 	void* cursor = tarfs_start;
 	while((void*)cursor<tarfs_end){
 		int64_t file_size = read_oct(((posix_header_ustar*)cursor)->size);
-		if(streq(((posix_header_ustar*)cursor)->name, file_path)){
+		if(streq(((posix_header_ustar*)cursor)->name, file_path+1)){
 			int64_t size_to_copy = ((file_size-offset)>size)?size:(file_size-offset);
 			if(size_to_copy < 0) return -1;
 			cursor += 512;
@@ -52,7 +52,7 @@ uint64_t tarfs_find_offset(char* file_path){
 	void* cursor = tarfs_start;
 	while((void*)cursor<tarfs_end){
 		int64_t file_size = read_oct(((posix_header_ustar*)cursor)->size);
-		if(streq(((posix_header_ustar*)cursor)->name, file_path)){
+		if(streq(((posix_header_ustar*)cursor)->name, file_path+1)){
 			cursor += 512;
 			return (uint64_t)cursor;
 		}
@@ -66,7 +66,7 @@ tar_file_info tarfs_file_info(char* file_path){
 	void* cursor = tarfs_start;
 	while((void*)cursor<tarfs_end){
 		int64_t file_size = read_oct(((posix_header_ustar*)cursor)->size);
-		if(streq(((posix_header_ustar*)cursor)->name, file_path)){
+		if(streq(((posix_header_ustar*)cursor)->name, file_path+1)){
 			info.mem_offset = (uint64_t)(cursor + 512);
 			info.size = file_size;
 			return info;

@@ -35,6 +35,7 @@ m_map* add_new_m_map_for_process(Process* proc, char type, char shared, char rw,
 	map->shared = shared;
 	map->rw = rw;
 	map->phy_page = get_phy_page_for_program(proc, map);
+	memset(map->phy_page->base, 0, 4096);
 	map->vir_addr = vir_addr;
 	map->next = 0;
 	m_map* cursor = proc->first_map;
@@ -106,8 +107,12 @@ void* add_page_for_process(Process* proc, uint64_t new_address, char rw, char ma
 		pde_->PDPE_addr = (uint64_t)pt >> 12;
 	}
 	register uint64_t* pte = &(((uint64_t*)(*pde & 0xFFFFFFFFFF000))[(new_address>>12) & 0b111111111]);
-	void* dest = add_new_m_map_for_process(proc, map_type, 0, rw, new_address)->phy_page->base;
 	PTE* pte_ = (PTE*)pte;
+	void* dest;
+	if(pte_->P == 1 && pte_->RW == 1){
+		kprintf("WARNING: process page reallocated\n");
+	}
+	dest = add_new_m_map_for_process(proc, map_type, 0, rw, new_address)->phy_page->base;
 	pte_->P = 1;
 	pte_->RW = rw;
 	pte_->US = 1;
@@ -224,13 +229,23 @@ void spawn_process(program_section* section, char* elf_file_path){
 		uint64_t prog_mem = section_cursor->memory_offset;
 		uint64_t to_read = 0;
 		uint64_t remain = section_cursor->size;
+		uint64_t mem_remain = section_cursor->mem_size;
+		void* new_page = 0;
 		for(; remain != 0; 
-			prog_disk += to_read, prog_mem += to_read, remain -= to_read){
+			prog_disk += to_read, prog_mem += to_read, remain -= to_read, mem_remain -= to_read){
 			to_read = math_min(4096, 4096-(prog_mem % 4096), remain, (uint64_t)-1);
-			void* new_page = add_page_for_process(new_p, prog_mem, 1, 2);
+			new_page = add_page_for_process(new_p, prog_mem, 1, 2);
 			if(tarfs_read(elf_file_path, new_page+(prog_mem%4096), to_read, prog_disk) < to_read){
 				kprintf("ERROR: cannot read enough segment from elf file\n");
 				while(1); // TODO: clean up and return instead of hung
+			}
+		}
+		if(mem_remain != 0) {
+			for(; mem_remain != 0; prog_mem++, mem_remain--){
+				if(prog_mem % 0x1000 == 0){
+					new_page = add_page_for_process(new_p, prog_mem, 1, 2);
+				}
+				*(uint8_t*)(uint64_t*)(new_page+(prog_mem%4096)) = 0;
 			}
 		}
 		section_cursor = section_cursor->next;
@@ -248,6 +263,8 @@ void spawn_process(program_section* section, char* elf_file_path){
 	new_p->rsp_current = (uint64_t)(process_initial_rsp);
 	new_p->heap_start = section_height_max;
 	new_p->heap_break = section_height_max;
+	new_p->workdir = sf_malloc(5);
+	memcpy(new_p->workdir, "/bin", 5);
 	// give basic file entries
 	file_table_entry* stdin_file = terminal_file_out[0];
 	file_table_entry* stdout_file = terminal_file_in[1];
@@ -409,6 +426,9 @@ Process* fork_process(Process* parent){
 	new_p->heap_start = parent->heap_start;
 	new_p->heap_break = parent->heap_break;
 	new_p->on_hold = 0;
+	int source_dir_len = strlen(parent->workdir);
+	new_p->workdir = sf_malloc(source_dir_len+1);
+	memcpy(new_p->workdir, parent->workdir, source_dir_len+1);
 	// duplicate file entries
 	for(int i=0; i<FD_SIZE; i++){
 		open_file_descriptor* fd = parent->open_fd[i];
@@ -456,7 +476,7 @@ Process* fork_process(Process* parent){
 }
 
 // this function does not write code to the replaced process
-void replace_process(Process* proc, program_section* section){
+void replace_process(Process* proc, program_section* section, uint64_t* initial_stack, uint64_t initial_stack_size){
 	// switch to kernel task mode first
 	
 	m_map* rsp0_map = 0;
@@ -535,7 +555,10 @@ void replace_process(Process* proc, program_section* section){
 	
 	// create one page for the stack now
 	assert(RPOCESS_RSP0_SIZE == 4096, "ERROR: only 4096 rsp0 stack supported\n");
-	add_page_for_process(new_p, (uint64_t)process_initial_rsp - 16, 1, 2);
+	void* process_initial_rsp_av = process_initial_rsp - initial_stack_size;
+	for(uint64_t counter = 0; counter< initial_stack_size; counter+=4096){
+		add_page_for_process(new_p, (uint64_t)process_initial_rsp - 16 - counter, 1, 2);
+	}
 	
 	// alloc data pages
 	program_section* section_cursor = section;
@@ -559,7 +582,7 @@ void replace_process(Process* proc, program_section* section){
 	new_p->name = "executed process";
 	new_p->cr3 = (uint64_t)PML4;
 	new_p->rsp = (uint64_t)(process_rsp0_start + RPOCESS_RSP0_SIZE - 16- 2*sizeof(handler_reg));
-	new_p->rsp_current = (uint64_t)(process_initial_rsp);
+	new_p->rsp_current = (uint64_t)(process_initial_rsp_av);
 	new_p->heap_start = section_height_max;
 	new_p->heap_break = section_height_max;
 	// setup basic rsp0 content
@@ -567,7 +590,7 @@ void replace_process(Process* proc, program_section* section){
 	reg->cs = USER_CODE_SEGMENT_SELECTOR;
 	reg->ss = USER_STACK_SEGMENT_SELECTOR;
 	reg->eflags = EFLAG_INTERRUPT; // enable interrupt
-	reg->ret_rsp = (uint64_t)(process_initial_rsp - 16);
+	reg->ret_rsp = (uint64_t)(process_initial_rsp_av - 8);
 	reg->ret_rip = section->entry_point;
 	
 	kprintf("DEBUG: thread replaced, cr3: %x\n", PML4);
@@ -600,6 +623,16 @@ void process_cleanup(Process* proc){
 			}
 		}
 	}
+	
+	// close all opened files
+	for(int i=0; i < FD_SIZE; i++){
+		if(proc->open_fd[i]->file_entry){
+			file_close(proc->open_fd[i]->file_entry);
+		}
+	}
+	
+	// free strings
+	sf_free(proc->workdir);
 	
 	// now proc still exist with everything reclaimed, it is a zombie now. 
 	proc->cleaned = 1;

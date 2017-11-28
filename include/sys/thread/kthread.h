@@ -45,6 +45,7 @@ struct Process{
 	uint64_t ret_value;
 	m_map* first_map;
 	open_file_descriptor* open_fd[FD_SIZE];
+	char* workdir;
 };
 
 struct m_map{
@@ -77,7 +78,7 @@ void spawn_process(program_section* section, char* elf_file_path);
 
 Process* fork_process(Process* parent);
 
-void replace_process(Process* proc, program_section* section);
+void replace_process(Process* proc, program_section* section, uint64_t* initial_stack, uint64_t initial_stack_size);
 
 void process_cleanup(Process* proc);
 
