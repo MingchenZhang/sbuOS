@@ -12,6 +12,7 @@ typedef struct file_table_entry file_table_entry;
 typedef struct file_table_waiting file_table_waiting;
 typedef struct file_table_entry_pair file_table_entry_pair;
 typedef struct inode inode;
+typedef struct simple_fs_file_list simple_fs_file_list;
 
 struct file_table_waiting{
 	Process* waiter; // 0 if there is no waiter
@@ -38,10 +39,22 @@ struct file_table_entry_pair{
 };
 
 struct inode {
-	
+	uint64_t base_lba;
+	uint8_t layer;
+	uint64_t size;
 };
 
+struct simple_fs_file_list {
+	char name[112];
+	uint64_t attr;
+	uint64_t lba;
+} __attribute__((packed)); 
+
+void init_file_system();
+int create_file_in_disk(char* path);
+inode* search_file_in_disk(char* path);
 file_table_entry* file_open_read(char* path);
+file_table_entry* file_open_write(char* path);
 void generate_entry_pair(file_table_entry** assign_to);
 int file_read(file_table_entry* file, Process* initiator, uint8_t* read_buffer, uint64_t size);
 int file_write(file_table_entry* file, Process* initiator, uint8_t* buffer_in, uint64_t size);

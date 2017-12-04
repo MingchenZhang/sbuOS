@@ -13,7 +13,7 @@
 #include <sys/thread/kthread.h>
 #include <sys/terminal.h>
 
-#define INITIAL_STACK_SIZE 4096
+#define INITIAL_STACK_SIZE 8192
 uint8_t initial_stack[INITIAL_STACK_SIZE]__attribute__((aligned(16)));
 uint32_t* loader_stack;
 extern char kernmem, physbase;
@@ -48,7 +48,6 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 	kprintf("cr0: %p\n", cr0);
 
 	init_idt();
-	// init_pic(); // it seems pic has been configured
 
 	init_timer(PIT_FREQUENCY);
 
@@ -59,6 +58,14 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 	init_terminal();
 	init_tarfs(&_binary_tarfs_start, &_binary_tarfs_end);
 	init_process();
+	
+	init_pci();
+	
+	init_file_system();
+	
+	// test_wp3();
+	
+	// while(1); // stop here
 	
 	// char* buffer = (void*)0x1000000;
 	// int64_t readed = tarfs_read("bin/cat", buffer, 512);

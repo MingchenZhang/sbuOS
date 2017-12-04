@@ -626,7 +626,7 @@ void process_cleanup(Process* proc){
 	
 	// close all opened files
 	for(int i=0; i < FD_SIZE; i++){
-		if(proc->open_fd[i]->file_entry){
+		if(proc->open_fd[i]){
 			file_close(proc->open_fd[i]->file_entry);
 		}
 	}

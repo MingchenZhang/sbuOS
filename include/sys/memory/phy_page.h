@@ -82,7 +82,7 @@ typedef struct PTE{
 }__attribute__((__packed__)) PTE;
 
 typedef struct page_use_record{
-	char type; // 0: undefined, 1:process paging(points to m_map)
+	char type; // 0: undefined, 1:process paging(points to m_map), 2:disk ram
 	uint64_t pt;
 	struct page_use_record* next;
 } page_use_record;
@@ -105,6 +105,8 @@ void* process_direct_mapping_addr;
 extern PML4E* kernel_page_table_PML4;
 
 void phy_page_init(uint32_t *modulep);
+
+struct page_entry* find_free_page_entry();
 
 void* get_phy_page(uint32_t num, char used_by);
 page_entry* get_phy_page_for_program(Process* proc, m_map* map);

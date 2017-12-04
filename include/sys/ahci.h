@@ -32,6 +32,8 @@
 #define MAX_CMD_SLOT_CNT 32
 #define MAX_PORT_CNT     32
 
+#define DISK_NUM 8
+
 #define PRDT_ENTRIES_PER_COMMAND_TABLE 8
 
 typedef enum {
@@ -337,6 +339,18 @@ typedef volatile struct {
   // 0x100 - 0x10FF, Port control registers
   hba_port_t ports[MAX_PORT_CNT]; // 1 ~ 32
 }__attribute__((__packed__)) hba_mem_t;
+
+typedef struct op_info {
+	int8_t result;
+	uint32_t slot;
+} op_info;
+
+hba_port_t* find_port(uint8_t disk_i);
+int ahci_read(hba_port_t* port, uint32_t startl, uint32_t starth, uint32_t sector_count, void* buffer);
+int ahci_write(hba_port_t* port, uint32_t startl, uint32_t starth, uint32_t sector_count, void* buffer);
+op_info ahci_read_task(uint8_t disk_i, uint64_t lba_4k, void* buffer);
+op_info ahci_write_task(uint8_t disk_i, uint64_t lba_4k, void* buffer);
+int check_ahci_port(uint8_t disk_i, uint32_t slot);
 
 void init_ahci(void* map_addr);
 int test_read(int sector_count, int disk_index);

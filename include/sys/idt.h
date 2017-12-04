@@ -37,6 +37,8 @@ kernel_space_task kernel_space_task_file;
 #define TASK_KEYBOARD_HANDLE 6
 #define TASK_KBRK 7
 #define TASK_REPLACE_PROCESS 8
+#define TASK_RW_DISK_BLOCK 9
+#define TASK_CP_PAGE_MALLOC 10
 
 int64_t isr_handler(handler_reg);
 

@@ -46,8 +46,26 @@ sys_test_write:
 	int $0x80
 	ret
 
+.global sys_test_open
+sys_test_open:
+	movq $6, %rax
+	int $0x80
+	ret
+
 .global sys_test_exec
 sys_test_exec:
 	movq $3, %rax
+	int $0x80
+	ret
+
+.global sys_test_read_block
+sys_test_read_block:
+	movq $249, %rax
+	int $0x80
+	ret
+
+.global sys_test_write_block
+sys_test_write_block:
+	movq $250, %rax
 	int $0x80
 	ret

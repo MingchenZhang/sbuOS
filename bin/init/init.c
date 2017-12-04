@@ -10,7 +10,7 @@ int main(int argc, char**argv){
 		while(1);
 	}else{ // child
 		sys_print_num((unsigned long)(_argv[0]));
-		sys_test_exec("fork_test", _argv, _envp);
+		sys_test_exec("test", _argv, _envp);
 		sys_print("sys_test_exec returned!!!\n");
 	}
 }

@@ -10,6 +10,8 @@
 #include <sys/memory/phy_page.h>
 #include <sys/terminal.h>
 #include <sys/memory/kmalloc.h>
+#include <sys/disk/disk_driver.h>
+#include <sys/disk/file_system.h>
 
 #define IRQ0 32
 #define IRQ1 33
@@ -333,7 +335,6 @@ int64_t isr_handler(handler_reg volatile reg){
 				written = file_read(file_entry, current_process, (uint8_t*)(uint64_t*)buffer, to_write);
 				// assume the file pair has not been closed
 				if(written == 0){
-					// TODO: make sf_malloc kernel task
 					// TODO: increment open count on file before sleep
 					file_table_waiting* waiter = sf_calloc(sizeof(file_table_waiting), 1);
 					waiter->waiter = current_process;
@@ -376,6 +377,122 @@ int64_t isr_handler(handler_reg volatile reg){
 			}
 			int readed = file_write(file_entry, current_process, (uint8_t*)(uint64_t*)buffer, to_read);
 			reg.rax = (uint64_t)readed;
+		}else if(reg.rax == 6){
+			// open
+			char* path = (char*)(reg.rdi);
+			int flag = (int)(reg.rsi);
+			// translate relative path
+			char* abs_path = calculate_path(current_process->workdir, path);
+			if(flag & 0b100){ // create the file
+				inode* node = search_file_in_disk(abs_path);
+				if(!node){
+					if(!create_file_in_disk(abs_path)){
+						// failed to create
+						kprintf("DEBUG: failed to create file\n");
+						reg.rax = (uint64_t)-1;
+						goto open_failed;
+					}
+				}else{
+					sf_free(node);
+				}
+			}
+			int i=0;
+			for(;i<FD_SIZE; i++){
+				if(!current_process->open_fd[i]) break;
+			}
+			if(i == FD_SIZE){
+				// no available fd, limit reached
+				kprintf("DEBUG: fd limit reached\n");
+				reg.rax = (uint64_t)-1;
+				goto open_failed;
+			}
+			if((flag & 0b11) == 0){
+				// read mode
+				file_table_entry* opened = file_open_read(abs_path);
+				if(!opened){
+					kprintf("DEBUG: file_open_read failed\n");
+					reg.rax = (uint64_t)-1;
+					goto open_failed;
+				}
+				open_file_descriptor* new_fd = sf_malloc(sizeof(open_file_descriptor));
+				new_fd->file_entry = opened;
+				current_process->open_fd[i] = new_fd;
+			}else if((flag & 0b11) == 1){
+				// write mode
+				file_table_entry* opened = file_open_write(abs_path);
+				if(!opened){
+					kprintf("DEBUG: file_open_write failed\n");
+					reg.rax = (uint64_t)-1;
+					goto open_failed;
+				}
+				open_file_descriptor* new_fd = sf_malloc(sizeof(open_file_descriptor));
+				new_fd->file_entry = opened;
+				current_process->open_fd[i] = new_fd;
+			}else{
+					kprintf("DEBUG: open flag error\n");
+				reg.rax = (uint64_t)-1;
+				goto open_failed;
+			}
+			reg.rax = i;
+			goto sys_call_finally;
+			open_failed: 
+			sf_free(abs_path);
+			goto sys_call_finally;
+		}else if(reg.rax == 249){
+			// test_kernel_read_block
+			uint64_t* user_buffer = (uint64_t*)reg.rdx; // buffer
+			kernel_space_task_file.type = TASK_RW_DISK_BLOCK;
+			kernel_space_task_file.param[0] = reg.rdi; // disk index
+			kernel_space_task_file.param[1] = (uint64_t)current_process;
+			kernel_space_task_file.param[2] = (uint64_t)reg.rsi; // LBA
+			kernel_space_task_file.param[3] = (uint64_t)0;
+			kernel_space_task_file.param[4] = 0;
+			kernel_space_handler_wrapper();
+			if(!kernel_space_task_file.ret[0]){
+				reg.rax = (uint64_t)-1;
+				goto sys_call_finally;
+			}
+			page_entry* read_to_page = (page_entry*)(uint64_t*)kernel_space_task_file.ret[1];
+			current_process->on_hold = 1;
+			// kprintf("DEBUG: kernel wait starts\n");
+			__asm__ volatile ("int $0x81;");
+			kernel_space_task_file.type = TASK_CP_PAGE_MALLOC;
+			uint64_t* buffer = sf_malloc(4096);
+			kernel_space_task_file.param[0] = (uint64_t)read_to_page;
+			kernel_space_task_file.param[1] = (uint64_t)buffer;
+			kernel_space_task_file.param[2] = 1; // page_to_malloc
+			kernel_space_handler_wrapper();
+			for(int i = 0; i<512; i++){
+				user_buffer[i] = buffer[i];
+			}
+			sf_free(buffer);
+			read_to_page->used_by = 0;
+			reg.rax = (uint64_t)0;
+			// kprintf("DEBUG: kernel wait ends\n");
+		}else if(reg.rax == 250){
+			// test_kernel_write_block
+			uint64_t* user_buffer = (uint64_t*)reg.rdx; // buffer
+			uint64_t* buffer = sf_malloc(4096);
+			for(int i = 0; i<512; i++){
+				buffer[i] = user_buffer[i];
+			}
+			kernel_space_task_file.type = TASK_RW_DISK_BLOCK;
+			kernel_space_task_file.param[0] = reg.rdi; // disk index
+			kernel_space_task_file.param[1] = (uint64_t)current_process;
+			kernel_space_task_file.param[2] = (uint64_t)reg.rsi; // LBA
+			kernel_space_task_file.param[3] = (uint64_t)buffer;
+			kernel_space_task_file.param[4] = 1;
+			kernel_space_handler_wrapper();
+			sf_free(buffer);
+			if(!kernel_space_task_file.ret[0]){
+				reg.rax = (uint64_t)-1;
+				goto sys_call_finally;
+			}
+			current_process->on_hold = 1;
+			// kprintf("DEBUG: kernel wait starts\n");
+			__asm__ volatile ("int $0x81;");
+			reg.rax = (uint64_t)0;
+			// kprintf("DEBUG: kernel wait ends\n");
 		}else if(reg.rax == 251){
 			// test_kernel_wait
 			kernel_space_task_file.type = TASK_REG_WAIT;
@@ -442,12 +559,16 @@ void kernel_space_handler(struct kernel_task_return_reg reg){
 	if(kernel_space_task_file.type == TASK_TIMER_TICK){
 		pic_tick_count++;
 		test_tick_handle();
+		check_disk_task();
+		
 	}else if(kernel_space_task_file.type == TASK_FORK_PROCESS){
 		Process* new_p = fork_process(current_process);
 		kernel_space_task_file.ret[0] = (uint64_t)new_p;
+		
 	}else if(kernel_space_task_file.type == TASK_REG_WAIT){
 		uint64_t ticks = kernel_space_task_file.param[0];
 		register_to_be_waken(current_process, ticks);
+		
 	}else if(kernel_space_task_file.type == TASK_PROC_PAGE_FAULT_HANDLE){
 		uint64_t err_num = kernel_space_task_file.param[0];
 		uint64_t requested_addr = kernel_space_task_file.param[1];
@@ -465,12 +586,15 @@ void kernel_space_handler(struct kernel_task_return_reg reg){
 			// TODO: terminate the process
 			while(1); // halt the system to figure out what's wrong
 		}
+		
 	}else if(kernel_space_task_file.type == TASK_PROC_CLEANUP){
 		Process* proc = (Process*)kernel_space_task_file.param[0];
 		process_cleanup(proc);
+		
 	}else if(kernel_space_task_file.type == TASK_KEYBOARD_HANDLE){
 		uint8_t c = asm_inb(0x60);
 		handle_keyboard_scan_code(c);
+		
 	}else if(kernel_space_task_file.type == TASK_KBRK){
 		uint64_t size = kernel_space_task_file.param[0];
 		if(size == 0) {
@@ -482,11 +606,55 @@ void kernel_space_handler(struct kernel_task_return_reg reg){
 			_kbrk(4096);
 		}
 		kernel_space_task_file.ret[0] = (uint64_t)ret;
+		
 	}else if(kernel_space_task_file.type == TASK_REPLACE_PROCESS){
 		Process* proc = (Process*)kernel_space_task_file.param[0];
 		program_section* sections = (program_section*)kernel_space_task_file.param[1];
 		uint64_t* initial_stack = (uint64_t*)kernel_space_task_file.param[2];
 		uint64_t initial_stack_size = (uint64_t)kernel_space_task_file.param[3];
 		replace_process(proc, sections, initial_stack, initial_stack_size);
+		
+	}else if(kernel_space_task_file.type == TASK_RW_DISK_BLOCK){
+		uint64_t disk_i = kernel_space_task_file.param[0];
+		Process* proc = (Process*)kernel_space_task_file.param[1];
+		uint64_t LBA = kernel_space_task_file.param[2];
+		uint64_t* buffer = (uint64_t*)kernel_space_task_file.param[3];
+		uint64_t is_write = kernel_space_task_file.param[4];
+		int result = 1;
+		page_entry* page = 0;
+		if(is_write){
+			page_entry* r_from = find_free_page_entry();
+			r_from->used_by = 2;
+			for(int i = 0; i<512; i++){
+				((uint64_t*)(r_from->base))[i] = buffer[i];
+			}
+			result = write_disk_block_req(disk_i, proc, LBA, r_from);
+			r_from->used_by = 0;
+			if(!result) kernel_space_task_file.ret[0] = 0;
+		}else{
+			page = read_disk_block_req(disk_i, proc, LBA);
+			kernel_space_task_file.ret[1] = (uint64_t)page;
+			if(!page) kernel_space_task_file.ret[0] = 0;
+		}
+		kernel_space_task_file.ret[0] = 1;
+		
+	}else if(kernel_space_task_file.type == TASK_CP_PAGE_MALLOC){
+		page_entry* page = (page_entry*)(uint64_t*)kernel_space_task_file.param[0];
+		uint64_t* page_addr = (uint64_t*)page->base;
+		uint64_t* malloc_addr = (uint64_t*)kernel_space_task_file.param[1];
+		uint64_t page_to_malloc = kernel_space_task_file.param[2];
+		if(page_to_malloc){
+			for(int i=0; i<512; i++){
+				malloc_addr[i] = page_addr[i];
+			}
+		}else{
+			for(int i=0; i<512; i++){
+				page_addr[i] = malloc_addr[i];
+			}
+		}
 	}
 }
+
+
+
+

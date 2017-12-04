@@ -4,6 +4,154 @@
 #include <sys/misc.h>
 #include <sys/memory/kmalloc.h>
 #include <sys/kprintf.h>
+#include <sys/ahci.h>
+
+#define DEAULT_DISK_INDEX 1
+uint64_t disk_block_free = 2;
+uint64_t disk_size = 0x800000;
+
+void* read_disk_block(uint8_t disk_i, Process* proc, uint64_t block){
+	kernel_space_task_file.type = TASK_RW_DISK_BLOCK;
+	kernel_space_task_file.param[0] = disk_i; // disk index
+	kernel_space_task_file.param[1] = (uint64_t)proc;
+	kernel_space_task_file.param[2] = (uint64_t)block; // LBA
+	kernel_space_task_file.param[3] = (uint64_t)0;
+	kernel_space_task_file.param[4] = 0;
+	kernel_space_handler_wrapper();
+	if(!kernel_space_task_file.ret[0]){
+		return 0;
+	}
+	page_entry* read_to_page = (page_entry*)(uint64_t*)kernel_space_task_file.ret[1];
+	current_process->on_hold = 1;
+	// kprintf("DEBUG: kernel wait starts\n");
+	__asm__ volatile ("int $0x81;");
+	uint64_t* buffer = sf_malloc(4096);
+	kernel_space_task_file.type = TASK_CP_PAGE_MALLOC;
+	kernel_space_task_file.param[0] = (uint64_t)read_to_page;
+	kernel_space_task_file.param[1] = (uint64_t)buffer;
+	kernel_space_task_file.param[2] = 1; // page_to_malloc
+	kernel_space_handler_wrapper();
+	read_to_page->used_by = 0;
+	return buffer;
+}
+
+int write_disk_block(uint8_t disk_i, Process* proc, uint64_t block, void* malloc_block){
+	kernel_space_task_file.type = TASK_RW_DISK_BLOCK;
+	kernel_space_task_file.param[0] = disk_i; // disk index
+	kernel_space_task_file.param[1] = (uint64_t)proc;
+	kernel_space_task_file.param[2] = (uint64_t)block; // LBA
+	kernel_space_task_file.param[3] = (uint64_t)malloc_block;
+	kernel_space_task_file.param[4] = 1;
+	kernel_space_handler_wrapper();
+	if(!kernel_space_task_file.ret[0]){
+		return 0;
+	}
+	current_process->on_hold = 1;
+	// kprintf("DEBUG: kernel wait starts\n");
+	__asm__ volatile ("int $0x81;");
+	return 1;
+}
+
+int write_superblock(uint8_t disk_i, uint64_t size, uint64_t free_starts){
+	uint64_t* buffer = sf_calloc(4096, 1);
+	memcpy(buffer, "simple_fs", 9); // 0:15
+	buffer[2] = size;
+	buffer[3] = free_starts;
+	int ret = write_disk_block(disk_i, current_process, 0, buffer);
+	sf_free(buffer);
+	return ret;
+}
+
+inode* search_file_in_disk(char* path){
+	// call kernel task to read 
+	uint64_t lba_c = 1;
+	while(1){
+		void* readed = read_disk_block(DEAULT_DISK_INDEX, current_process, lba_c);
+		if(!readed){
+			sf_free(readed);
+			return 0;
+		}
+		simple_fs_file_list* list = (simple_fs_file_list*)readed;
+		int i=0;
+		for(; i<31; i++){
+			if((list[i].attr & (1L<<63)) && streq(list[i].name, path)){
+				sf_free(readed);
+				inode* file_info = sf_malloc(sizeof(inode));
+				file_info->base_lba = list[i].lba;
+				file_info->layer = 0; // default layer to 0
+				file_info->size = list[i].attr & 0xffffffff;
+				file_info->file_list_lba = lba_c;
+				file_info->file_list_lba_i = i;
+				return file_info;
+			}
+		}
+		lba_c = *(uint64_t*)(list + i);
+		sf_free(readed);
+		if(lba_c == 0){
+			return 0;
+		}
+	}
+}
+
+void init_file_system(){
+	page_entry* w_to = find_free_page_entry();
+	w_to->used_by = 2;
+	ahci_read(find_port(DEAULT_DISK_INDEX), 0, 0, 8, w_to->base);
+	uint64_t* info = (uint64_t*)(w_to->base);
+	if(!streq((char*)info, "simple_fs")){
+		kprintf("warning: file system not formated, formating...\n");
+		int result = ahci_write(find_port(DEAULT_DISK_INDEX), 0, 0, 8, w_to->base);
+		if(!result){
+			kprintf("error: file system cannot be formated.\n");
+			w_to->used_by = 0;
+			disk_size = 0;
+		}
+		return;
+	}
+	disk_block_free = info[2];
+	disk_size = info[3];
+	return;
+}
+
+int create_file_in_disk(char* path){
+	uint64_t lba_c = 1;
+	while(1){
+		void* readed = read_disk_block(DEAULT_DISK_INDEX, current_process, lba_c);
+		if(!readed){
+			sf_free(readed);
+			return 0;
+		}
+		simple_fs_file_list* list = (simple_fs_file_list*)readed;
+		int i=0;
+		for(; i<31; i++){
+			if(!(list[i].attr & (1L<<63))){
+				list[i].attr = 0x8000000000000000; // just set the present bit
+				memset(list[i].name, 0, 112);
+				for(int j=0; path[j]; j++) list[i].name[j] = path[j];
+				list[i].lba = disk_block_free;
+				if(!write_disk_block(DEAULT_DISK_INDEX, current_process, lba_c, readed)){
+					kprintf("warning: fail to write file list\n");
+					sf_free(readed);
+					return 0;
+				}
+				// allocate one block for this file, by writing to the superblock
+				disk_block_free++;
+				if(!write_superblock(DEAULT_DISK_INDEX, disk_size, disk_block_free)){
+					kprintf("warning: fail to write superblock\n");
+					sf_free(readed);
+					return 0;
+				}
+				sf_free(readed);
+				return 1;
+			}
+		}
+		assert(0, "assert: # of file exceed 31\n"); // TODO: solve 31 limit
+		sf_free(readed);
+		if(lba_c == 0){
+			return 0;
+		}
+	}
+}
 
 file_table_entry* file_open_read(char* path){
 	uint64_t file_offset = tarfs_find_offset(path);
@@ -21,9 +169,49 @@ file_table_entry* file_open_read(char* path){
 		file->buffer_c_c = 0; // where consumer has consumed
 		return file;
 	}else{
-		// this is a disk path
-		kprintf("file_open_read: no disk path supported yet\n");
+		// this might be a disk path
+		inode* file_info = search_file_in_disk(path);
+		if(!file_info){
+			return 0;
+		}
+		file_table_entry* file = sf_calloc(sizeof(file_table_entry), 1);
+		file->io_type = 5;
+		uint32_t path_len = strlen(path);
+		char* path_str = sf_malloc(sizeof(char) * path_len +1);
+		memcpy(path_str, path, path_len);
+		file->path_str = path_str;
+		file->in_from = (uint64_t)file_info;
+		file->open_count = 1;
+		file->buffer_p_c = 1; // where producer is going to produced at
+		file->buffer_c_c = 0; // where consumer has consumed
+		return file;
+	}
+}
+
+file_table_entry* file_open_write(char* path){
+	uint64_t file_offset = tarfs_find_offset(path);
+	if(file_offset){
+		// this is a tarfs path
+		kprintf("warning: attemp to write to tarfs file");
 		return 0;
+	}else{
+		// this might be a disk path
+		inode* file_info = search_file_in_disk(path);
+		if(!file_info){
+			return 0;
+		}
+		file_table_entry* file = sf_calloc(sizeof(file_table_entry), 1);
+		file->io_type = 6;
+		uint32_t path_len = strlen(path);
+		char* path_str = sf_malloc(sizeof(char) * path_len +1);
+		memcpy(path_str, path, path_len);
+		file->path_str = path_str;
+		file->out_to = (uint64_t)file_info;
+		file->open_count = 1;
+		file->buffer_p_c = 1; // where producer is going to produced at
+		file->buffer_c_c = 0; // where consumer has consumed
+		file->offset = file_info->size;
+		return file;
 	}
 }
 
@@ -61,6 +249,15 @@ int file_read(file_table_entry* file, Process* initiator, uint8_t* read_buffer, 
 			*read_buffer = file->buffer[file->buffer_c_c];
 		}
 		return read_count;
+	}else if(file->io_type == 5){
+		inode* file_info = (inode*)file->in_from;
+		assert(file_info->layer == 0, "file_info->layer larger than zero\n");
+		void* readed = read_disk_block(DEAULT_DISK_INDEX, current_process, file_info->base_lba);
+		uint64_t to_read = math_min(size, file_info->size-file->offset, -1);
+		if(to_read == 0) return -1;
+		memcpy(read_buffer, readed + file->offset , to_read);
+		file->offset += to_read;
+		return to_read;
 	}else{
 		kprintf("file_read not yet supports io_type:%d\n", file->io_type);
 		return -1;
@@ -92,6 +289,34 @@ int file_write(file_table_entry* file, Process* initiator, uint8_t* buffer_in, u
 		}
 		((file_table_entry*)(file->out_to))->first_waiters = 0;
 		return read_count;
+	}else if(file->io_type == 6){
+		// read the block first
+		inode* file_info = (inode*)file->out_to;
+		assert(file_info->layer == 0, "file_info->layer larger than zero\n");
+		void* readed = read_disk_block(DEAULT_DISK_INDEX, current_process, file_info->base_lba);
+		uint8_t* readed_ = readed;
+		int written = 0;
+		if(file->offset > 4096){
+			file->offset = 4096;
+		}
+		if(file->offset + size > 4096){ // make sure the file don't exceed the size limit
+			size = 4096-file->offset;
+		}
+		for(uint64_t c = file->offset; c<size; c++){
+			readed_[c] = buffer_in[c];
+			written++;
+		}
+		if(write_disk_block(DEAULT_DISK_INDEX, current_process, file_info->base_lba, readed)){
+		}else{
+			return -1;
+		}
+		// write file list to increase the size
+		if(file_info->size < written + file->offset)
+		file_info->size += written;
+		void* readed_l = read_disk_block(DEAULT_DISK_INDEX, current_process, file_info->file_list_lba);
+		simple_fs_file_list* list = readed_l;
+		list[file_info->file_list_lba_i].attr = ((list[file_info->file_list_lba_i].attr) & 0xffffffff00000000)|(file_info->size & 0xffffffff);
+		return written;
 	}else{
 		kprintf("file_read not yet supports io_type:%d\n", file->io_type);
 		return -1;

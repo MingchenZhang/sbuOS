@@ -14,4 +14,9 @@ unsigned long sys_test_read(unsigned long fd, void* buffer, unsigned long size);
 
 unsigned long sys_test_write(unsigned long fd, void* buffer, unsigned long size);
 
+unsigned long sys_test_open(char* path, int flags);
+
 unsigned long sys_test_exec(char* path, char** argv, char** envp);
+
+long sys_test_read_block(long disk_i, unsigned long LBA, void* buffer);
+long sys_test_write_block(long disk_i, unsigned long LBA, void* buffer);

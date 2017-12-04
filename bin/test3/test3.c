@@ -1,65 +1,33 @@
-void sys_print(char* str){
-	__asm__ volatile (
-		"movq $253, %%rdi;"
-		"movq %0, %%rsi;"
-		"int $0x80;"
-		::"r"((unsigned long)str):"rsi", "rdi");
-}
-
-void sys_print_num(unsigned long num){
-	__asm__ volatile (
-		"movq $252, %%rdi;"
-		"movq %0, %%rsi;"
-		"int $0x80;"
-		::"r"(num):"rsi", "rdi");
-}
-
-long sys_test_fork(){
-	long ret;
-	__asm__ volatile (
-		"movq $1, %%rdi;"
-		"int $0x80;"
-		"movq %%rax, %0;"
-		:"=r"(ret)
-	);
-	return ret;
-}
-
-void sys_test_exit(){
-	__asm__ volatile (
-		"movq $2, %%rdi;"
-		"int $0x80;"
-		::);
-}
-
-void sys_test_wait(long sec){
-	__asm__ volatile (
-		"movq $251, %%rdi;"
-		"movq %0, %%rsi;"
-		"int $0x80;"
-		::"r"(sec):"rsi", "rdi"
-	);
-}
-
-void stack(int count){
-	char volatile space[3000];
-	space[0] = count;
-	if(count < 0){
-		sys_print("done\n");
-	}else{
-		unsigned long rsp;
-		__asm__ volatile ("movq %%rsp, %0": "=r"(rsp));
-		sys_print("rsp reaches ");
-		sys_print_num(rsp);
-		sys_print("\n");
-		stack(space[0]-1);
-	}
-}
+#include <syscall_test.h>
 
 int main(int argc, char**argv){
-	for(;;){
-		sys_test_wait(2);
-		sys_print("timer tick\n");
+	unsigned char buffer[4096];
+	for(int i=0; i<4096; i++){
+		buffer[i] = 0xde;
 	}
+	sys_print("starts writing block\n");
+	if(sys_test_write_block(1, 0, buffer) == -1){
+		sys_print("fail to write\n");
+		sys_test_exit();
+	}else{
+		sys_print("success to write\n");
+	}
+	for(int i=0; i<4096; i++){
+		buffer[i] = 0;
+	}
+	sys_print("starts reading block\n");
+	if(sys_test_read_block(1, 0, buffer) == -1){
+		sys_print("fail to read\n");
+		sys_test_exit();
+	}else{
+		sys_print("success to read\n");
+	}
+	for(int i=0; i<4096; i++){
+		if(buffer[i] != 0xde){
+			sys_print("read mismatch\n");
+			sys_test_exit();
+		}
+	}
+	sys_print("content checked\n");
 	sys_test_exit();
 }

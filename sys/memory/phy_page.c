@@ -25,6 +25,23 @@ struct page_entry* find_free_page_entry(){
 	return 0;
 }
 
+struct page_entry* find_free_page_entry_many(uint32_t num){
+	for(struct page_entry* cursor = page_entry_base; cursor < page_entry_end; cursor++){
+		uint32_t accu = 0;
+		struct page_entry* starts_at = cursor;
+		for(; cursor < page_entry_end; cursor++, accu++){
+			if(accu == num) return starts_at;
+			if((cursor-1)->base + 4096 != cursor->base){ // skip if the address is not consecutive
+				break;
+			}
+			if(cursor->used_by != 0){ // skip if used
+				break;
+			}
+		}
+	}
+	return 0;
+}
+
 void phy_page_init(uint32_t *modulep){
 	
 	struct smap_t {
@@ -116,13 +133,20 @@ void phy_page_init(uint32_t *modulep){
 
 void* get_phy_page(uint32_t num, char used_by){
 	if(num > 1) {
+		page_entry* new_page = find_free_page_entry_many(num);
+		for(page_entry* c = new_page; num>0; num--, c++){
+			assert(c->used_by == 0, "assert: find_free_page_entry_many returned used address\n");
+			c->used_by = used_by;
+		}
+		return new_page->base;
 		kprintf("PANIC: get_phy_page not support multiple pages yet\n");
 		panic_halt();
+	}else{
+		page_entry* new_page = find_free_page_entry();
+		new_page->used_by = used_by;
+		// kprintf("get_phy_page: allocated one at: %p\n", new_page->base);
+		return new_page->base;
 	}
-	page_entry* new_page = find_free_page_entry();
-	new_page->used_by = used_by;
-	// kprintf("get_phy_page: allocated one at: %p\n", new_page->base);
-	return new_page->base;
 }
 
 page_entry* get_phy_page_for_program(Process* proc, m_map* map){
@@ -239,12 +263,14 @@ void kernel_page_table_init(){
 	pdp2->US = 0;
 	pdp2->PDPE_addr = (uint64_t)PD >> 12;
 	
-	PDPE* pdp4 = PDP2 + 0; // lower pdp entry // TODO: may create more for more than 1GB access
-	pdp4->P = 1;
-	pdp4->RW = 1;
-	pdp4->US = 0;
-	pdp4->PS = 0;
-	pdp4->PDPE_addr = (uint64_t)kernel_base_pd >> 12;
+	for(int i=0; i<512; i++){
+		PDPE* pdp4 = PDP2 + i; // now we have 512 GB direct mapping
+		pdp4->P = 1;
+		pdp4->RW = 1;
+		pdp4->US = 0;
+		pdp4->PS = 1;
+		pdp4->PDPE_addr = (((uint64_t)0x40000000)*i) >> 12;
+	}
 	
 	PDE* pd0 = PD + 0; // kmalloc pd entry
 	pd0->P = 1;
