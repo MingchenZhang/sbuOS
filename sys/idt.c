@@ -12,6 +12,7 @@
 #include <sys/memory/kmalloc.h>
 #include <sys/disk/disk_driver.h>
 #include <sys/disk/file_system.h>
+#include <sys/terminal.h>
 
 #define IRQ0 32
 #define IRQ1 33
@@ -157,6 +158,21 @@ static inline void test_tick_handle(){
 	}
 }
 
+static void handle_sig_pending(volatile handler_reg* reg){
+	if(current_process->sig_pending && current_process->sig_saved_reg.int_num == 0 && current_process->sig_handler){
+		if(current_process->sig_pending == SIGKILL){ // kill
+			current_process->on_hold = 1;
+			current_process->terminated = 1; // label to be cleaned
+		}else{ // normal signal
+			memcpy(&current_process->sig_saved_reg, (handler_reg*)reg, sizeof(handler_reg));
+			reg->ret_rip = current_process->sig_handler;
+			reg->rdi = current_process->sig_pending;
+			current_process->sig_pending = 0;
+		}
+
+	}
+}
+
 int64_t isr_handler(handler_reg volatile reg){
 	int64_t ret = 0;
 	// reset PIC first
@@ -172,6 +188,7 @@ int64_t isr_handler(handler_reg volatile reg){
 		kernel_space_handler_wrapper();
 		// also update terminal out
 		update_terminal_out();
+		handle_sig_pending(&reg);
 		ret = 1; // will trigger context switch
 	}else if(reg.int_num == IRQ1){ // keyboard interrupt
 		kernel_space_task_file.type = TASK_KEYBOARD_HANDLE;
@@ -438,6 +455,70 @@ int64_t isr_handler(handler_reg volatile reg){
 			open_failed: 
 			sf_free(abs_path);
 			goto sys_call_finally;
+		}else if(reg.rax == 7){
+			// sys_test_set_signal_handler
+			uint64_t handler = reg.rdi;
+			current_process->sig_handler = handler;
+			ret = 0; // don't even need to context switch
+		}else if(reg.rax == 8){
+			// sys_test_sig_return
+			if(!current_process->sig_saved_reg.int_num){
+				// process is not in signal handler, abort syscall
+				goto sys_call_finally;
+			}
+			reg = current_process->sig_saved_reg;
+			current_process->sig_saved_reg.int_num = 0;
+			ret = 0; //  maybe the context switch is not needed
+		}else if(reg.rax == 9){
+			// sys_test_sig
+			uint64_t pid = reg.rdi;
+			uint64_t sig_num = reg.rsi;
+			Process* proc = search_process((uint32_t)pid);
+			if(!proc){
+				goto sys_call_finally;
+			}
+			proc->sig_pending = sig_num;
+		}else if(reg.rax == 10){
+			// sys_test_alarm
+			kprintf("DEBUG: syscall sys_test_alarm called\n");
+			uint64_t seconds = reg.rdi;
+			register_to_trigger_alarm(current_process, seconds * PIT_FREQUENCY);
+			
+		}else if(reg.rax == 11){
+			// sys_test_dup2
+			uint64_t oldfd = reg.rdi;
+			uint64_t newfd = reg.rsi;
+			if(oldfd > FD_SIZE || newfd > FD_SIZE){
+				reg.rax = (uint64_t)-1;
+				goto sys_call_finally;
+			}
+			if(current_process->open_fd[newfd] != 0){
+				reg.rax = (uint64_t)-1;
+				goto sys_call_finally;
+			}
+			if(current_process->open_fd[oldfd] == 0){
+				reg.rax = (uint64_t)-1;
+				goto sys_call_finally;
+			}
+			open_file_descriptor* oldfde = current_process->open_fd[oldfd];
+			open_file_descriptor* newfde = sf_calloc(sizeof(open_file_descriptor), 1);
+			memcpy(newfde, oldfde, sizeof(open_file_descriptor));
+			oldfde->file_entry->open_count++;
+			reg.rax = 0;
+			
+		}else if(reg.rax == 12){
+			// sys_test_ioctl
+			// uint64_t fd = reg.rdi;
+			uint64_t op = reg.rsi;
+			uint64_t arg = reg.rdx;
+			if(op == TIOCSPGRP){
+				// TODO: check fd points to
+				foreground_pid = arg;
+				reg.rax = 0;
+			}else{
+				kprintf("warning: non supported ioctl operation\n");
+				reg.rax = (uint64_t)-1;
+			}
 		}else if(reg.rax == 249){
 			// test_kernel_read_block
 			uint64_t* user_buffer = (uint64_t*)reg.rdx; // buffer
@@ -528,12 +609,16 @@ int64_t isr_handler(handler_reg volatile reg){
 			kprintf("WARNING: syscall undefined called\n");
 		}
 		sys_call_finally:
+		handle_sig_pending(&reg);
 		// ret = 1; // will trigger context switch
 		goto finally;
 	}else if(reg.int_num == 13){
 		kprintf("General Protection fault occurred. Fault num: %d\n", reg.err_num);
 		kprintf("fault rip: %x\n", reg.ret_rip);
-		while(1); // halt the system to figure out what's wrong
+		current_process->on_hold = 1;
+		current_process->terminated = 1;
+		// while(1); // halt the system to figure out what's wrong
+		ret = 1;
 	}else if(reg.int_num == 14){
 		// assert(0, "page fault wip\n");
 		uint64_t program_cr3;
@@ -546,6 +631,8 @@ int64_t isr_handler(handler_reg volatile reg){
 		kernel_space_task_file.param[0] = reg.err_num;
 		kernel_space_task_file.param[1] = requested_addr;
 		kernel_space_handler_wrapper();
+		handle_sig_pending(&reg);
+		ret = 1;
 	}else{
 		kprintf("Unhandled interrupt on vector: %d\n", reg.int_num);
 		while(1); // halt the system to figure out what's wrong
@@ -582,9 +669,14 @@ void kernel_space_handler(struct kernel_task_return_reg reg){
 			add_page_for_process(current_process, requested_addr, 1, 2);
 			current_process->rsp_current = requested_addr;
 		}else{
-			kprintf("unable to handle Page Fault\n");
-			// TODO: terminate the process
-			while(1); // halt the system to figure out what's wrong
+			kprintf("unable to handle Page Fault for process: %d\n", current_process->id);
+			if(current_process->sig_handler){
+				current_process->sig_pending = SIGSEGV;
+			}else{
+				current_process->on_hold = 1;
+				current_process->terminated = 1;
+			}
+			// while(1); // halt the system to figure out what's wrong
 		}
 		
 	}else if(kernel_space_task_file.type == TASK_PROC_CLEANUP){

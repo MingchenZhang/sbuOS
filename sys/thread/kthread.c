@@ -578,7 +578,7 @@ void replace_process(Process* proc, program_section* section, uint64_t* initial_
 	}
 	
 	handler_reg* reg = (void*)(actual_rsp0 + RPOCESS_RSP0_SIZE - 16 - sizeof(handler_reg));// does not support multuple rsp0 pages
-	new_p->id = id_count++;
+	// new_p->id = id_count++;
 	new_p->name = "executed process";
 	new_p->cr3 = (uint64_t)PML4;
 	new_p->rsp = (uint64_t)(process_rsp0_start + RPOCESS_RSP0_SIZE - 16- 2*sizeof(handler_reg));
@@ -594,6 +594,30 @@ void replace_process(Process* proc, program_section* section, uint64_t* initial_
 	reg->ret_rip = section->entry_point;
 	
 	kprintf("DEBUG: thread replaced, cr3: %x\n", PML4);
+}
+
+int process_add_signal(uint32_t pid, uint64_t signal){
+	Process* c = first_process;
+	while(c){
+		if(c->id == pid){
+			c->sig_pending = signal;
+			return 1;
+		}
+		c = c->next;
+	}
+	return 0;
+}
+
+Process* search_process(uint32_t pid){
+	Process* c = first_process;
+	while(c){
+		if(c->id == pid){
+			return c;
+		}
+		c = c->next;
+	}
+	return 0;
+	
 }
 
 void process_cleanup(Process* proc){

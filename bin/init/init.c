@@ -6,11 +6,17 @@ char* _envp[] = {"PATH=/bin", "HOME=/usr/root/home", 0};
 int main(int argc, char**argv){
 	sys_print_num((unsigned long)_argv);
 	// while(1);
-	if(sys_test_fork()){ // parent
+	long child_pid = sys_test_fork();
+	if(child_pid){ // parent
+		sys_test_ioctl(0, TIOCSPGRP, child_pid);
 		while(1);
 	}else{ // child
-		sys_print_num((unsigned long)(_argv[0]));
-		sys_test_exec("test", _argv, _envp);
+		sys_test_exec("test3", _argv, _envp);
+		// if(sys_test_fork()){
+			// sys_test_exec("test3", _argv, _envp);
+		// }else{
+			// sys_test_exec("test_daemon", _argv, _envp);
+		// }
 		sys_print("sys_test_exec returned!!!\n");
 	}
 }

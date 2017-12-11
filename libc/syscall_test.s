@@ -58,6 +58,48 @@ sys_test_exec:
 	int $0x80
 	ret
 
+.global sys_test_set_signal_handler
+sys_test_set_signal_handler:
+	movq $7, %rax
+	int $0x80
+	ret
+
+.global sys_test_sig_return
+sys_test_sig_return:
+	movq $8, %rax
+	int $0x80
+	ret
+
+.global sys_test_sig
+sys_test_sig:
+	movq $9, %rax
+	int $0x80
+	ret
+
+.global sys_test_alarm
+sys_test_alarm:
+	movq $10, %rax
+	int $0x80
+	ret
+	
+.global sys_test_dup2
+sys_test_dup2:
+	movq $11, %rax
+	int $0x80
+	ret
+
+.global sys_test_ioctl
+sys_test_ioctl:
+	movq $12, %rax
+	int $0x80
+	ret
+
+.global sys_test_sbrk
+sys_test_sbrk:
+	movq $13, %rax
+	int $0x80
+	ret
+
 .global sys_test_read_block
 sys_test_read_block:
 	movq $249, %rax

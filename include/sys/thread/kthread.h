@@ -39,13 +39,16 @@ struct Process{
 	uint64_t rsp_current; // location of current stack boundary (to identify page fault near stack boundary)
 	uint64_t heap_start;
 	uint64_t heap_break;
-	unsigned char on_hold: 1;
-	unsigned char terminated: 1;
-	unsigned char cleaned: 1;
+	uint64_t on_hold: 1;
+	uint64_t terminated: 1;
+	uint64_t cleaned: 1;
 	uint64_t ret_value;
 	m_map* first_map;
 	open_file_descriptor* open_fd[FD_SIZE];
 	char* workdir;
+	uint64_t sig_pending;
+	uint64_t sig_handler;
+	handler_reg sig_saved_reg; // sig_saved_reg.int_num is 0x80 if the process is in signalled state, otherwise it should be zero
 };
 
 struct m_map{
@@ -86,6 +89,9 @@ int check_and_handle_rw_page_fault(Process* proc, uint64_t addr/* accessed addre
 
 void add_kernel_thread_to_process_list();
 
+
+int process_add_signal(uint32_t pid, uint64_t signal);
+Process* search_process(uint32_t pid);
 void process_schedule();
 void switch_process();
 void save_current_state(handler_reg volatile reg);

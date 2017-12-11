@@ -2,6 +2,9 @@
 #include <sys/memory/kmalloc.h>
 #include <sys/kprintf.h>
 #include <sys/disk/file_system.h>
+#include <sys/thread/kthread.h>
+#include <sys/idt.h>
+#include <sys/terminal.h>
 
 #define INPUT_BUFFER_LENGTH 256
 
@@ -14,6 +17,7 @@ void init_terminal(){
 	terminal_buffer = sf_malloc(INPUT_BUFFER_LENGTH);
 	generate_entry_pair(terminal_file_in);
 	generate_entry_pair(terminal_file_out);
+	foreground_pid = 0;
 }
 
 void terminal_input_ascii(char ascii){
@@ -24,10 +28,12 @@ void terminal_input_ascii(char ascii){
 		// kprintf("terminal receives: %s", terminal_buffer);
 		file_write(terminal_file_out[1], 0, (uint8_t*)terminal_buffer, terminal_buffer_end);
 		terminal_buffer_end = 0;
-	}
-	if(ascii == 0x8){
+	}else if(ascii == 0x8){ // back space
 		if(terminal_buffer_end > 1)terminal_buffer_end-=2;
 		else terminal_buffer_end--;
+	}else if(ascii == 24){ // ctr-c
+		terminal_buffer_end--;
+		if(foreground_pid) process_add_signal(foreground_pid, SIGINT);
 	}
 	print_terminal_input_line(terminal_buffer, terminal_buffer_end);
 }

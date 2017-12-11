@@ -65,6 +65,7 @@ void handle_keyboard_scan_code(uint8_t code){
 				last_key_pressed[1] = ascii;
 				last_key_pressed[2] = 0;
 				update_topright_display();
+				if(ascii == 'c') terminal_input_ascii(24);
 			}
 		}
 	}

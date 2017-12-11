@@ -42,6 +42,8 @@ struct inode {
 	uint64_t base_lba;
 	uint8_t layer;
 	uint64_t size;
+	uint64_t file_list_lba;
+	int file_list_lba_i;
 };
 
 struct simple_fs_file_list {

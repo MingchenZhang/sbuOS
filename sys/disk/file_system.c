@@ -253,7 +253,7 @@ int file_read(file_table_entry* file, Process* initiator, uint8_t* read_buffer, 
 		inode* file_info = (inode*)file->in_from;
 		assert(file_info->layer == 0, "file_info->layer larger than zero\n");
 		void* readed = read_disk_block(DEAULT_DISK_INDEX, current_process, file_info->base_lba);
-		uint64_t to_read = math_min(size, file_info->size-file->offset, -1);
+		uint64_t to_read = math_min(size, file_info->size-file->offset, (uint64_t)-1);
 		if(to_read == 0) return -1;
 		memcpy(read_buffer, readed + file->offset , to_read);
 		file->offset += to_read;
@@ -302,8 +302,8 @@ int file_write(file_table_entry* file, Process* initiator, uint8_t* buffer_in, u
 		if(file->offset + size > 4096){ // make sure the file don't exceed the size limit
 			size = 4096-file->offset;
 		}
-		for(uint64_t c = file->offset; c<size; c++){
-			readed_[c] = buffer_in[c];
+		for(uint64_t c = 0; c<size; c++){
+			(readed_+file->offset)[c] = buffer_in[c];
 			written++;
 		}
 		if(write_disk_block(DEAULT_DISK_INDEX, current_process, file_info->base_lba, readed)){
@@ -311,11 +311,15 @@ int file_write(file_table_entry* file, Process* initiator, uint8_t* buffer_in, u
 			return -1;
 		}
 		// write file list to increase the size
-		if(file_info->size < written + file->offset)
-		file_info->size += written;
+		if(file_info->size < written + file->offset) file_info->size = written + file->offset;
 		void* readed_l = read_disk_block(DEAULT_DISK_INDEX, current_process, file_info->file_list_lba);
 		simple_fs_file_list* list = readed_l;
 		list[file_info->file_list_lba_i].attr = ((list[file_info->file_list_lba_i].attr) & 0xffffffff00000000)|(file_info->size & 0xffffffff);
+		if(!write_disk_block(DEAULT_DISK_INDEX, current_process, file_info->file_list_lba, readed_l)){
+			sf_free(readed_l);
+			return -1;
+		}
+		sf_free(readed_l);
 		return written;
 	}else{
 		kprintf("file_read not yet supports io_type:%d\n", file->io_type);

@@ -29,6 +29,7 @@ typedef struct kernel_space_task{
 	uint64_t ret[6];
 } kernel_space_task;
 kernel_space_task kernel_space_task_file;
+
 #define TASK_TIMER_TICK 1
 #define TASK_FORK_PROCESS 2
 #define TASK_REG_WAIT 3
@@ -39,6 +40,15 @@ kernel_space_task kernel_space_task_file;
 #define TASK_REPLACE_PROCESS 8
 #define TASK_RW_DISK_BLOCK 9
 #define TASK_CP_PAGE_MALLOC 10
+
+#define SIGINT 2
+#define SIGKILL 9
+#define SIGSEGV 11
+#define SIGALRM 14
+
+// ioctl op:
+#define TIOCGPGRP 101
+#define TIOCSPGRP 102
 
 int64_t isr_handler(handler_reg);
 

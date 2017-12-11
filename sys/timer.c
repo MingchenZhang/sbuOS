@@ -4,6 +4,7 @@
 #include <sys/misc.h>
 #include <sys/timer.h>
 #include <sys/kprintf.h>
+#include <sys/idt.h>
 
 waiter* first_waiter = 0;
 
@@ -14,6 +15,7 @@ void register_to_be_waken(Process* proc, uint64_t ticks_to_wake){
 		memset(first_waiter, 0, sizeof(waiter));
 		first_waiter->proc = proc;
 		first_waiter->ticks_to_wake = ticks_to_wake;
+		first_waiter->is_alarm = 0;
 		// proc->on_hold = 1;
 		return;
 	}
@@ -24,8 +26,31 @@ void register_to_be_waken(Process* proc, uint64_t ticks_to_wake){
 	memset(new_waiter, 0, sizeof(waiter));
 	new_waiter->proc = proc;
 	new_waiter->ticks_to_wake = ticks_to_wake;
+	new_waiter->is_alarm = 0;
 	cursor->next = new_waiter;
 	proc->on_hold = 1;
+}
+
+void register_to_trigger_alarm(Process* proc, uint64_t ticks_to_wake){
+	waiter* cursor = first_waiter;
+	if(!cursor){
+		first_waiter = sf_calloc(sizeof(waiter), 1);
+		memset(first_waiter, 0, sizeof(waiter));
+		first_waiter->proc = proc;
+		first_waiter->ticks_to_wake = ticks_to_wake;
+		first_waiter->is_alarm = 1;
+		// proc->on_hold = 1;
+		return;
+	}
+	while(cursor->next){
+		cursor = cursor->next;
+	}
+	waiter* new_waiter = sf_calloc(sizeof(waiter), 1);
+	memset(new_waiter, 0, sizeof(waiter));
+	new_waiter->proc = proc;
+	new_waiter->ticks_to_wake = ticks_to_wake;
+	new_waiter->is_alarm = 1;
+	cursor->next = new_waiter;
 }
 
 void tick_timer_update(){
@@ -35,7 +60,8 @@ void tick_timer_update(){
 	}
 	if(cursor->ticks_to_wake-- == 0){
 		// kprintf("DEBUG: tick_timer_update: wake up %d\n", cursor->next->proc->id);
-		cursor->proc->on_hold = 0;
+		if(cursor->is_alarm) cursor->proc->sig_pending = SIGALRM;
+		else cursor->proc->on_hold = 0;
 		first_waiter = cursor->next;
 		sf_free(cursor);
 		if(!first_waiter) return;
@@ -44,7 +70,8 @@ void tick_timer_update(){
 	while(cursor->next){
 		if(cursor->next->ticks_to_wake-- == 0){
 			// kprintf("DEBUG: tick_timer_update: wake up %d\n", cursor->next->proc->id);
-			cursor->next->proc->on_hold = 0;
+			if(cursor->is_alarm) cursor->proc->sig_pending = SIGALRM;
+			else cursor->proc->on_hold = 0;
 			waiter* to_be_removed = cursor->next;
 			cursor->next = to_be_removed->next;
 			sf_free(to_be_removed);
