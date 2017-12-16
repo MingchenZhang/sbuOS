@@ -231,6 +231,9 @@ void spawn_process(program_section* section, char* elf_file_path){
 		uint64_t remain = section_cursor->size;
 		uint64_t mem_remain = section_cursor->mem_size;
 		void* new_page = 0;
+		if(prog_mem + mem_remain > section_height_max){
+			section_height_max = prog_mem + mem_remain;
+		}
 		for(; remain != 0; 
 			prog_disk += to_read, prog_mem += to_read, remain -= to_read, mem_remain -= to_read){
 			to_read = math_min(4096, 4096-(prog_mem % 4096), remain, (uint64_t)-1);
@@ -250,6 +253,7 @@ void spawn_process(program_section* section, char* elf_file_path){
 		}
 		section_cursor = section_cursor->next;
 	}
+	section_height_max = ((section_height_max-1)/4096+4)*4096;
 	
 	// now the address space is set up
 	
@@ -299,7 +303,7 @@ void spawn_process(program_section* section, char* elf_file_path){
 		}
 		cursor->next = new_p;
 	}
-	kprintf("DEBUG: thread spawned, cr3: %x\n", PML4);
+	// kprintf("DEBUG: thread spawned, cr3: %x\n", PML4);
 }
 
 void* dup_page_for_process(Process* proc_dest, uint64_t new_address, char rw, page_entry* ptr_to){
@@ -418,6 +422,7 @@ Process* fork_process(Process* parent){
 	handler_reg* reg = (void*)(actual_rsp0 + RPOCESS_RSP0_SIZE - 16 - sizeof(handler_reg));// does not support multuple rsp0 pages
 	handler_reg* reg2 = reg - 1;
 	new_p->id = id_count++;
+	new_p->parent = parent;
 	new_p->name = "elf process (forked)";
 	new_p->next = 0;
 	new_p->cr3 = (uint64_t)PML4;
@@ -549,9 +554,10 @@ void replace_process(Process* proc, program_section* section, uint64_t* initial_
 	pdp2->PDPE_addr = (uint64_t)kernel_malloc_pd >> 12; // points to the start of the memory
 	
 	// restore saved page map
-	pdp1_map->next = rsp0_map;
-	void* actual_rsp0 = map_page_for_process(new_p, (uint64_t)process_rsp0_start, 1, 4, (uint64_t)rsp0_map->phy_page->base);
+	pdp1_map->next = rsp0_map; // proc record for this physical page will not match
 	rsp0_map->next = 0;
+	void* actual_rsp0 = map_page_for_process(new_p, (uint64_t)process_rsp0_start, 1, 4, (uint64_t)rsp0_map->phy_page->base);
+	
 	
 	// create one page for the stack now
 	assert(RPOCESS_RSP0_SIZE == 4096, "ERROR: only 4096 rsp0 stack supported\n");
@@ -568,6 +574,10 @@ void replace_process(Process* proc, program_section* section, uint64_t* initial_
 		uint64_t prog_mem = section_cursor->memory_offset;
 		uint64_t to_read = 0;
 		uint64_t remain = section_cursor->size;
+		uint64_t mem_remain = section_cursor->mem_size;
+		if(prog_mem + mem_remain > section_height_max){
+			section_height_max = prog_mem + mem_remain;
+		}
 		for(; remain != 0; 
 			prog_disk += to_read, prog_mem += to_read, remain -= to_read){
 			to_read = math_min(4096, 4096-(prog_mem % 4096), remain, (uint64_t)-1);
@@ -576,6 +586,7 @@ void replace_process(Process* proc, program_section* section, uint64_t* initial_
 		}
 		section_cursor = section_cursor->next;
 	}
+	section_height_max = ((section_height_max-1)/4096+4)*4096;
 	
 	handler_reg* reg = (void*)(actual_rsp0 + RPOCESS_RSP0_SIZE - 16 - sizeof(handler_reg));// does not support multuple rsp0 pages
 	// new_p->id = id_count++;
@@ -593,7 +604,12 @@ void replace_process(Process* proc, program_section* section, uint64_t* initial_
 	reg->ret_rsp = (uint64_t)(process_initial_rsp_av - 8);
 	reg->ret_rip = section->entry_point;
 	
-	kprintf("DEBUG: thread replaced, cr3: %x\n", PML4);
+	// change kernel task stack to newly replaced process
+	uint64_t* kernel_task_stack = (uint64_t*)get_rsp0_stack();
+	uint64_t* cr3 = kernel_task_stack - 2;
+	*cr3 = (uint64_t)PML4;
+	
+	kprintf("DEBUG: thread replaced, cr3: %x, id:%d\n", PML4, new_p->id);
 }
 
 int process_add_signal(uint32_t pid, uint64_t signal){
@@ -601,6 +617,7 @@ int process_add_signal(uint32_t pid, uint64_t signal){
 	while(c){
 		if(c->id == pid){
 			c->sig_pending = signal;
+			c->on_hold = 0;
 			return 1;
 		}
 		c = c->next;
@@ -621,6 +638,12 @@ Process* search_process(uint32_t pid){
 }
 
 void process_cleanup(Process* proc){
+	// starts wake up parent
+	if(proc->parent && (proc->parent->id_wait_for == proc->id || proc->parent->id_wait_for == -1)){
+		proc->parent->on_hold = 0;
+		proc->parent->id_wait_for_p = proc;
+	}
+	
 	m_map* map_cur = proc->first_map;
 	while(map_cur){
 		free_page_for_program(map_cur->phy_page, map_cur);
@@ -705,7 +728,7 @@ void process_schedule(){
 			break;
 		}
 		if(next->terminated && !next->cleaned){
-			kprintf("DEBUG: cleaning proc id:%d\n", next->id);
+			// kprintf("DEBUG: cleaning proc id:%d\n", next->id);
 			// process_cleanup(next);
 			kernel_space_task_file.type = TASK_PROC_CLEANUP;
 			kernel_space_task_file.param[0] = (uint64_t)next;

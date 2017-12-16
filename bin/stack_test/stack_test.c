@@ -1,35 +1,39 @@
-void sys_print(char* str){
-	__asm__ volatile (
-		"movq $253, %%rdi;"
-		"movq %0, %%rsi;"
-		"int $0x80;"
-		::"r"((unsigned long)str):"rsi", "rdi");
-}
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <debuglib.h>
 
-void sys_print_num(unsigned long num){
-	__asm__ volatile (
-		"movq $252, %%rdi;"
-		"movq %0, %%rsi;"
-		"int $0x80;"
-		::"r"(num):"rsi", "rdi");
-}
+char* _argv[] = {0};
+char* _envp[] = {0};
 
-void stack(int count){
-	char volatile space[3000];
-	space[0] = count;
-	if(count < 0){
-		sys_print("done\n");
-	}else{
-		unsigned long rsp;
-		__asm__ volatile ("movq %%rsp, %0": "=r"(rsp));
-		sys_print("rsp reaches ");
-		sys_print_num(rsp);
-		sys_print("\n");
-		stack(space[0]-1);
+int main(int argc, char *argv[], char *envp[]){
+	_print("start allocating\n");
+	short buffer[6000];
+	for(int i=0; i<6000; i++){
+		buffer[i] = 8888-i;
 	}
-}
-
-int main(int argc, char**argv){
-	stack(40);
-	while(1);
+	
+	int child = fork();
+	if(!child){
+		_print("parent start execute\n");
+		execvpe("cat", _argv, _envp);
+	}else{
+		_print("child start verifying\n");
+		for(int i=0; i<6000; i++){
+			buffer[i] = 6666-i;
+			if(i%1000 == 0) yield();
+		}
+		for(int i=0; i<6000; i++){
+			if(buffer[i] != 6666-i){
+				goto c_failed;
+			}
+			if(i%1000 == 0) yield();
+		}
+		_print("child verification succeed\n");
+		exit(0);
+		c_failed:
+		_print("child verification failed\n");
+		exit(1);
+	}
+	
 }

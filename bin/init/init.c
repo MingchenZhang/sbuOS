@@ -1,22 +1,26 @@
-#include <syscall_test.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <debuglib.h>
+#include <sys/ioctl.h>
 
-char* _argv[] = {"test.c", "arg1", "-l", 0};
-char* _envp[] = {"PATH=/bin", "HOME=/usr/root/home", 0};
+char* _argv[] = {"sbush", 0};
+char* _envp[] = {"PATH=/bin/", 0};
 
-int main(int argc, char**argv){
-	sys_print_num((unsigned long)_argv);
+int main(int argc, char *argv[], char *envp[]){
 	// while(1);
-	long child_pid = sys_test_fork();
+	long child_pid = fork();
 	if(child_pid){ // parent
-		sys_test_ioctl(0, TIOCSPGRP, child_pid);
+		// _print("init parent \n");
+		ioctl(0, TIOCSPGRP, child_pid);
 		while(1);
 	}else{ // child
-		sys_test_exec("test3", _argv, _envp);
+		// _print("init child \n");
+		execvpe("waiter_test", _argv, _envp);
 		// if(sys_test_fork()){
 			// sys_test_exec("test3", _argv, _envp);
 		// }else{
 			// sys_test_exec("test_daemon", _argv, _envp);
 		// }
-		sys_print("sys_test_exec returned!!!\n");
+		_print("sys_test_exec returned!!!\n");
 	}
 }

@@ -9,4 +9,9 @@ int kill(pid_t pid, int sig);
 typedef void (*sighandler_t)(int);
 sighandler_t signal(int signum, sighandler_t handler);
 
+#define SIGINT 2
+#define SIGKILL 9
+#define SIGSEGV 11
+#define SIGALRM 14
+
 #endif

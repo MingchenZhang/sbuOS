@@ -19,4 +19,8 @@ typedef uint64_t off_t;
 
 typedef uint32_t pid_t;
 
+typedef void (*sighandler_t)(int);
+
+typedef int mode_t;
+
 #endif

@@ -13,6 +13,11 @@
 #include <sys/disk/disk_driver.h>
 #include <sys/disk/file_system.h>
 #include <sys/terminal.h>
+#include <sys/ioctl.h>
+
+#include <signal.h>
+#include <errno.h>
+#include <dirent.h>
 
 #define IRQ0 32
 #define IRQ1 33
@@ -169,8 +174,11 @@ static void handle_sig_pending(volatile handler_reg* reg){
 			reg->rdi = current_process->sig_pending;
 			current_process->sig_pending = 0;
 		}
-
 	}
+}
+
+void trigger_ctx_switch(){
+	__asm__ volatile ("int $0x81;");
 }
 
 int64_t isr_handler(handler_reg volatile reg){
@@ -198,10 +206,220 @@ int64_t isr_handler(handler_reg volatile reg){
 			ret = 1;
 			goto finally;
 		}
+		// if(reg.rax != 103 && reg.rax != 104){
+			// uint64_t program_cr3;
+			// __asm__ volatile("movq %%cr3, %0":"=r"(program_cr3):);
+			// kprintf("(%x:%d)", program_cr3, reg.rax);
+		// }
 		// syscall return must be written back to reg.rax
-		if(reg.rax == 1){
-			// fork
-			kprintf("syscall: fork called\n");
+		if(reg.rax == 12){
+			// int64_t sys_ioctl(int fd, uint64_t op, uint64_t arg);
+			// uint64_t fd = reg.rdi;
+			uint64_t op = reg.rsi;
+			uint64_t arg = reg.rdx;
+			if(op == TIOCSPGRP){
+				// TODO: check fd points to
+				foreground_pid = arg;
+				reg.rax = 0;
+			}else{
+				kprintf("warning: non supported ioctl operation\n");
+				reg.rax = (uint64_t)-1;
+			}
+		}else if(reg.rax == 100){
+			// int64_t sys_signal(pid_t pid, uint64_t sig);
+			uint32_t pid = (uint32_t)reg.rdi;
+			uint64_t sig_num = reg.rsi;
+			Process* proc = search_process((uint32_t)pid);
+			if(!proc){
+				reg.rax = -EINVAL;
+				goto sys_call_finally;
+			}
+			proc->sig_pending = sig_num;
+			reg.rax = 0;
+		}else if(reg.rax == 101){
+			// int sys_set_signal_handler(void (*handler)(uint64_t));
+			uint64_t handler = reg.rdi;
+			current_process->sig_handler = handler;
+			ret = 0; // don't even need to context switch
+		}else if(reg.rax == 102){
+			// int64_t sys_open(void *pathname, uint64_t flags);
+			char* path = (char*)(reg.rdi);
+			int flag = (int)(reg.rsi);
+			// translate relative path
+			char* abs_path = calculate_path(current_process->workdir, path);
+			if(flag & 0b100){ // create the file
+				inode* node = search_file_in_disk(abs_path);
+				if(!node){
+					if(!create_file_in_disk(abs_path)){
+						// failed to create
+						kprintf("DEBUG: failed to create file\n");
+						reg.rax = (uint64_t)-EIO;
+						goto open_failed;
+					}
+				}else{
+					sf_free(node);
+				}
+			}
+			int i=0;
+			for(;i<FD_SIZE; i++){
+				if(!current_process->open_fd[i]) break;
+			}
+			if(i == FD_SIZE){
+				// no available fd, limit reached
+				kprintf("DEBUG: fd limit reached\n");
+				reg.rax = (uint64_t)-EMFILE;
+				goto open_failed;
+			}
+			if((flag & 0b11) == 0){
+				// read mode
+				file_table_entry* opened = file_open_read(abs_path);
+				if(!opened){
+					kprintf("DEBUG: file_open_read failed\n");
+					reg.rax = (uint64_t)-EIO;
+					goto open_failed;
+				}
+				open_file_descriptor* new_fd = sf_malloc(sizeof(open_file_descriptor));
+				new_fd->file_entry = opened;
+				current_process->open_fd[i] = new_fd;
+			}else if((flag & 0b11) == 1){
+				// write mode
+				file_table_entry* opened = file_open_write(abs_path);
+				if(!opened){
+					kprintf("DEBUG: file_open_write failed\n");
+					reg.rax = (uint64_t)-EIO;
+					goto open_failed;
+				}
+				open_file_descriptor* new_fd = sf_malloc(sizeof(open_file_descriptor));
+				new_fd->file_entry = opened;
+				current_process->open_fd[i] = new_fd;
+			}else{
+					kprintf("DEBUG: open flag error\n");
+				reg.rax = (uint64_t)-EINVAL;
+				goto open_failed;
+			}
+			reg.rax = i;
+			goto sys_call_finally;
+			open_failed: 
+			sf_free(abs_path);
+			goto sys_call_finally;
+		}else if(reg.rax == 103){
+			// int64_t sys_read(uint64_t fd, void *buf, uint64_t count);
+			uint64_t fd = reg.rdi;
+			uint64_t buffer = reg.rsi;
+			uint64_t to_write = reg.rdx;
+			if(fd >= FD_SIZE){
+				reg.rax = (uint64_t)-EMFILE;
+				goto sys_call_finally;
+			}
+			open_file_descriptor* file = current_process->open_fd[fd];
+			if(!file || !file->file_entry){
+				reg.rax = (uint64_t)-EBADF;
+				goto sys_call_finally;
+			}
+			file_table_entry* file_entry = file->file_entry;
+			if(file_entry->io_type != 2 && file_entry->io_type != 3 && file_entry->io_type != 5){
+				reg.rax = (uint64_t)-EBADF;
+				goto sys_call_finally;
+			}
+			int written = 0;
+			while(1){
+				written = file_read(file_entry, current_process, (uint8_t*)(uint64_t*)buffer, to_write);
+				// assume the file pair has not been closed
+				if(written == 0){
+					// TODO: increment open count on file before sleep
+					file_table_waiting* waiter = sf_calloc(sizeof(file_table_waiting), 1);
+					waiter->waiter = current_process;
+					if(!file_entry->first_waiters){
+						file_entry->first_waiters = waiter;
+					}else{
+						file_table_waiting* cursor = file_entry->first_waiters;
+						while(cursor->next){
+							cursor = cursor->next;
+						}
+						cursor->next = waiter;
+					}
+					// set on_hold
+					current_process->on_hold = 1;
+					// sleep this process in kernel
+					trigger_ctx_switch();
+					kprintf("sssss");
+					if(current_process->sig_pending){
+						break;
+					}
+				}else{
+					break;
+				}
+			}
+			reg.rax = (uint64_t)written;
+		}else if(reg.rax == 104){
+			// int64_t sys_write(uint64_t fd, void *buf, uint64_t count);
+			uint64_t fd = reg.rdi;
+			uint64_t buffer = reg.rsi;
+			uint64_t to_read = reg.rdx;
+			if(fd >= FD_SIZE){
+				reg.rax = (uint64_t)-EMFILE;
+				goto sys_call_finally;
+			}
+			open_file_descriptor* file = current_process->open_fd[fd];
+			if(!file || !file->file_entry){
+				reg.rax = (uint64_t)-EBADF;
+				goto sys_call_finally;
+			}
+			file_table_entry* file_entry = file->file_entry;
+			if(file_entry->io_type != 1 && file_entry->io_type != 4 && file_entry->io_type != 6){
+				reg.rax = (uint64_t)-EBADF;
+				goto sys_call_finally;
+			}
+			int readed = file_write(file_entry, current_process, (uint8_t*)(uint64_t*)buffer, to_read);
+			reg.rax = (uint64_t)readed;
+		}else if(reg.rax == 105){
+			// void sys_exit(int status);
+			int status = (int)reg.rdi;
+			current_process->on_hold = 1;
+			current_process->terminated = 1;
+			current_process->ret_value = status;
+			ret = 1;
+		}else if(reg.rax == 106){
+			// int64_t sys_brk(uint64_t new_bp);
+			uint64_t new_bp = reg.rdi;
+			if(new_bp == 0){
+				reg.rax = current_process->heap_break;
+				// kprintf("DEBUG: brk returns(%x)\n", current_process->heap_start);
+				goto sys_call_finally;
+			}
+			if(new_bp < current_process->heap_start){
+				reg.rax = (uint64_t)-ENOMEM;
+				// kprintf("warning: new_bp too small(%x)\n", new_bp);
+				goto sys_call_finally;
+			}
+			current_process->heap_break = new_bp;
+			// kprintf("heap_break changed to: %x\n", current_process->heap_break);
+			reg.rax = 0;
+		}else if(reg.rax == 107){
+			// int64_t sys_unlink(char * pathname);
+			// TODO
+			reg.rax = 0;
+		}else if(reg.rax == 108){
+			// int64_t sys_chdir(char * path);
+			char* path = (char*)reg.rdi;
+			uint32_t len = strlen((char*)path);
+			char* old_path = current_process->workdir;
+			sf_free(old_path);
+			char* new_path = sf_malloc(len+1);
+			for(int i=0; path[i]; i++) new_path[i] = path[i];
+			new_path[len-1] = 0;
+			current_process->workdir = new_path;
+			reg.rax = 0;
+		}else if(reg.rax == 109){
+			// int64_t sys_getdir(char* buffer, uint64_t size);
+			char* buffer = (char*)(uint64_t*)reg.rdi;
+			uint64_t size = reg.rsi;
+			char* path = current_process->workdir;
+			int i=0;
+			for(; path[i] && i<size-1; i++) buffer[i] = path[i];
+			reg.rax = (uint64_t)buffer;
+		}else if(reg.rax == 110){
+			// int64_t sys_fork();
 			// store the context on process structure
 			current_process->saved_reg = reg;
 			kernel_space_task_file.type = TASK_FORK_PROCESS;
@@ -210,16 +428,9 @@ int64_t isr_handler(handler_reg volatile reg){
 			reg.rax = new_p->id;
 			// kprintf("DEBUG: fork complete with new child. id: %d, cr3: %x\n", new_p->id, new_p->cr3);
 			ret = 1; // also to refresh page table
-		}else if(reg.rax == 2){
-			// exit
-			kprintf("syscall: exit called\n");
-			current_process->on_hold = 1;
-			current_process->terminated = 1;
-			ret = 1;
-			// kprintf("syscall: exit complete\n");
-		}else if(reg.rax == 3){
-			// exec
-			kprintf("syscall: exec called\n");
+		}else if(reg.rax == 111){
+			// int64_t sys_exec(char* path, char* argv[], char* envp[]);
+			// kprintf("syscall: exec called\n");
 			char* path = (char*)(uint64_t*)reg.rdi;
 			char** argv = (char**)(uint64_t*)reg.rsi;
 			char** envp = (char**)(uint64_t*)reg.rdx;
@@ -228,12 +439,12 @@ int64_t isr_handler(handler_reg volatile reg){
 			// read the elf file sections into memory
 			file_table_entry* file = file_open_read(abs_path); // TODO: this needs to be a kernel task
 			if(!file){
-				reg.rax = 1;
+				reg.rax = (uint64_t)-EACCES;
 				goto sys_call_finally;
 			}
 			program_section* sections = read_elf(file);
 			if(!sections){
-				reg.rax = 2;
+				reg.rax = (uint64_t)-ENOEXEC;
 				goto sys_call_finally;
 			}
 			// start construct initial stack
@@ -276,14 +487,14 @@ int64_t isr_handler(handler_reg volatile reg){
 			stack_cur++;
 			assert(stack_cur - initial_stack == pointer_ends>>3, "ASSERT: exec initial stack size error\n");
 			// stack prepared, ready to replace program
-			kprintf("syscall: exec process replacing\n");
+			// kprintf("syscall: exec process replacing\n");
 			kernel_space_task_file.type = TASK_REPLACE_PROCESS;
 			kernel_space_task_file.param[0] = (uint64_t) current_process;
 			kernel_space_task_file.param[1] = (uint64_t) sections;
 			kernel_space_task_file.param[2] = (uint64_t) initial_stack;
 			kernel_space_task_file.param[3] = (uint64_t) size_need;
 			kernel_space_handler_wrapper();
-			kprintf("syscall: exec process replaced\n");
+			// kprintf("syscall: exec process replaced\n");
 			// restore program sections
 			// alloc data pages
 			program_section* section_cursor = sections;
@@ -326,142 +537,118 @@ int64_t isr_handler(handler_reg volatile reg){
 			}
 			// done
 			sf_free(abs_path);
-			kprintf("syscall: exec process loaded\n");
+			// kprintf("syscall: exec process loaded\n");
 			ret = 1;
-		}else if(reg.rax == 4){
-			// read
+		}else if(reg.rax == 112){
+			// int64_t sys_wait(int64_t pid, int* status);
+			uint32_t pid = (uint32_t)reg.rdi;
+			int* status_ret = (int*)reg.rsi;
+			// TODO: check if pid exist
+			current_process->id_wait_for = pid;
+			current_process->on_hold = 1;
+			current_process->id_wait_for_p = 0;
+			trigger_ctx_switch();
+			if(current_process->id_wait_for_p){
+				status_ret[0] = current_process->id_wait_for_p->ret_value;
+			}
+			sf_free(current_process->id_wait_for_p);
+			reg.rax = 0;
+		}else if(reg.rax == 113){
+			// void sys_pause(uint64_t nano_second);
+			kernel_space_task_file.type = TASK_REG_WAIT;
+			kernel_space_task_file.param[0] = reg.rdi * PIT_FREQUENCY / 1000000;
+			kernel_space_handler_wrapper();
+			current_process->on_hold = 1;
+			// kprintf("DEBUG: kernel wait starts\n");
+			__asm__ volatile ("int $0x81;");
+			// kprintf("DEBUG: kernel wait ends\n");
+			reg.rax = 0;
+		}else if(reg.rax == 114){
+			// int64_t sys_getpid();
+			reg.rax = current_process->id;
+		}else if(reg.rax == 115){
+			// int64_t sys_getppid();
+			if(current_process->parent) reg.rax = current_process->parent->id;
+			else reg.rax = 0;
+		}else if(reg.rax == 116){
+			// int64_t sys_lseek(uint64_t fd, uint64_t offset);
 			uint64_t fd = reg.rdi;
-			uint64_t buffer = reg.rsi;
-			uint64_t to_write = reg.rdx;
+			uint64_t offset = reg.rsi;
 			if(fd >= FD_SIZE){
-				reg.rax = (uint64_t)-1;
+				reg.rax = (uint64_t)-EMFILE;
 				goto sys_call_finally;
 			}
 			open_file_descriptor* file = current_process->open_fd[fd];
 			if(!file || !file->file_entry){
-				reg.rax = (uint64_t)-2;
+				reg.rax = (uint64_t)-EBADF;
 				goto sys_call_finally;
 			}
 			file_table_entry* file_entry = file->file_entry;
-			if(file_entry->io_type != 2 && file_entry->io_type != 3 && file_entry->io_type != 5){
-				reg.rax = (uint64_t)-3;
+			file_entry->offset = offset;
+			reg.rax = 0;
+		}else if(reg.rax == 117){
+			// int64_t sys_mkdir(char* path);
+			// TODO
+			reg.rax = 0;
+		}else if(reg.rax == 118){
+			// int64_t sys_pipe(int fd[2]);
+			int* fd = (int*)reg.rdi;
+			// check if fd is writable
+			file_table_entry* tmp[2];
+			open_file_descriptor** open_fd = current_process->open_fd;
+			int outfd = 0;
+			for(;outfd<FD_SIZE && open_fd[outfd]; outfd++);
+			if(outfd == FD_SIZE) {
+				reg.rax = (uint64_t)-EMFILE;
 				goto sys_call_finally;
 			}
-			int written;
-			while(1){
-				written = file_read(file_entry, current_process, (uint8_t*)(uint64_t*)buffer, to_write);
-				// assume the file pair has not been closed
-				if(written == 0){
-					// TODO: increment open count on file before sleep
-					file_table_waiting* waiter = sf_calloc(sizeof(file_table_waiting), 1);
-					waiter->waiter = current_process;
-					if(!file_entry->first_waiters){
-						file_entry->first_waiters = waiter;
-					}else{
-						file_table_waiting* cursor = file_entry->first_waiters;
-						while(cursor->next){
-							cursor = cursor->next;
-						}
-						cursor->next = waiter;
-					}
-					// set on_hold
-					current_process->on_hold = 1;
-					// sleep this process in kernel
-					__asm__ volatile ("int $0x81;");
-				}else{
-					break;
-				}
+			int infd = 0;
+			for(;infd<FD_SIZE && open_fd[infd]; infd++);
+			if(infd == FD_SIZE) {
+				reg.rax = (uint64_t)-EMFILE;
+				goto sys_call_finally;
 			}
-			reg.rax = (uint64_t)written;
-		}else if(reg.rax == 5){
-			// write
-			uint64_t fd = reg.rdi;
-			uint64_t buffer = reg.rsi;
-			uint64_t to_read = reg.rdx;
-			if(fd >= FD_SIZE){
+			generate_entry_pair(tmp);
+			open_fd[outfd] = sf_malloc(sizeof(open_file_descriptor));
+			open_fd[infd] = sf_malloc(sizeof(open_file_descriptor));
+			open_fd[outfd]->file_entry = tmp[0];
+			open_fd[infd]->file_entry = tmp[1];
+			fd[0] = outfd;
+			fd[1] = infd;
+			reg.rax = 0;
+		}else if(reg.rax == 119){
+			// int64_t sys_list_files(char* dir_path, struct dirent* write_to, int index);
+			char* dir_path = (char*)reg.rdi;
+			struct dirent* write_to = (struct dirent*)reg.rsi;
+			int index = (int)reg.rdx;
+			char* abs_path = calculate_path(current_process->workdir, dir_path);
+			dirent_sys de = list_next_file(abs_path, index);
+			if(!de.result){
 				reg.rax = (uint64_t)-1;
+				sf_free(abs_path);
 				goto sys_call_finally;
 			}
-			open_file_descriptor* file = current_process->open_fd[fd];
-			if(!file || !file->file_entry){
-				reg.rax = (uint64_t)-2;
-				goto sys_call_finally;
-			}
-			file_table_entry* file_entry = file->file_entry;
-			if(file_entry->io_type != 1 && file_entry->io_type != 4 && file_entry->io_type != 6){
-				reg.rax = (uint64_t)-3;
-				goto sys_call_finally;
-			}
-			int readed = file_write(file_entry, current_process, (uint8_t*)(uint64_t*)buffer, to_read);
-			reg.rax = (uint64_t)readed;
-		}else if(reg.rax == 6){
-			// open
-			char* path = (char*)(reg.rdi);
-			int flag = (int)(reg.rsi);
-			// translate relative path
-			char* abs_path = calculate_path(current_process->workdir, path);
-			if(flag & 0b100){ // create the file
-				inode* node = search_file_in_disk(abs_path);
-				if(!node){
-					if(!create_file_in_disk(abs_path)){
-						// failed to create
-						kprintf("DEBUG: failed to create file\n");
-						reg.rax = (uint64_t)-1;
-						goto open_failed;
-					}
-				}else{
-					sf_free(node);
-				}
-			}
-			int i=0;
-			for(;i<FD_SIZE; i++){
-				if(!current_process->open_fd[i]) break;
-			}
-			if(i == FD_SIZE){
-				// no available fd, limit reached
-				kprintf("DEBUG: fd limit reached\n");
-				reg.rax = (uint64_t)-1;
-				goto open_failed;
-			}
-			if((flag & 0b11) == 0){
-				// read mode
-				file_table_entry* opened = file_open_read(abs_path);
-				if(!opened){
-					kprintf("DEBUG: file_open_read failed\n");
-					reg.rax = (uint64_t)-1;
-					goto open_failed;
-				}
-				open_file_descriptor* new_fd = sf_malloc(sizeof(open_file_descriptor));
-				new_fd->file_entry = opened;
-				current_process->open_fd[i] = new_fd;
-			}else if((flag & 0b11) == 1){
-				// write mode
-				file_table_entry* opened = file_open_write(abs_path);
-				if(!opened){
-					kprintf("DEBUG: file_open_write failed\n");
-					reg.rax = (uint64_t)-1;
-					goto open_failed;
-				}
-				open_file_descriptor* new_fd = sf_malloc(sizeof(open_file_descriptor));
-				new_fd->file_entry = opened;
-				current_process->open_fd[i] = new_fd;
-			}else{
-					kprintf("DEBUG: open flag error\n");
-				reg.rax = (uint64_t)-1;
-				goto open_failed;
-			}
-			reg.rax = i;
-			goto sys_call_finally;
-			open_failed: 
+			int name_len = strlen(de.name);
+			memcpy(write_to->d_name, de.name, name_len+1);
+			write_to->d_ino = de.inode;
+			write_to->d_off = 0;
+			write_to->d_reclen = name_len;
+			sf_free(de.name);
 			sf_free(abs_path);
-			goto sys_call_finally;
-		}else if(reg.rax == 7){
-			// sys_test_set_signal_handler
-			uint64_t handler = reg.rdi;
-			current_process->sig_handler = handler;
-			ret = 0; // don't even need to context switch
-		}else if(reg.rax == 8){
-			// sys_test_sig_return
+			reg.rax = 0;
+		}else if(reg.rax == 120){
+			// int64_t sys_close(uint64_t fd);
+			uint64_t fd = reg.rdi;
+			if(fd >= FD_SIZE){
+				reg.rax = (uint64_t)-EMFILE;
+				goto sys_call_finally;
+			}
+			file_close(current_process->open_fd[fd]->file_entry);
+			sf_free(current_process->open_fd[fd]);
+			current_process->open_fd[fd] = 0;
+			reg.rax = 0;
+		}else if(reg.rax == 121){
+			// int64_t sys_sig_return();
 			if(!current_process->sig_saved_reg.int_num){
 				// process is not in signal handler, abort syscall
 				goto sys_call_finally;
@@ -469,23 +656,8 @@ int64_t isr_handler(handler_reg volatile reg){
 			reg = current_process->sig_saved_reg;
 			current_process->sig_saved_reg.int_num = 0;
 			ret = 0; //  maybe the context switch is not needed
-		}else if(reg.rax == 9){
-			// sys_test_sig
-			uint64_t pid = reg.rdi;
-			uint64_t sig_num = reg.rsi;
-			Process* proc = search_process((uint32_t)pid);
-			if(!proc){
-				goto sys_call_finally;
-			}
-			proc->sig_pending = sig_num;
-		}else if(reg.rax == 10){
-			// sys_test_alarm
-			kprintf("DEBUG: syscall sys_test_alarm called\n");
-			uint64_t seconds = reg.rdi;
-			register_to_trigger_alarm(current_process, seconds * PIT_FREQUENCY);
-			
-		}else if(reg.rax == 11){
-			// sys_test_dup2
+		}else if(reg.rax == 122){
+			// int sys_dup(int oldfd, int newfd);
 			uint64_t oldfd = reg.rdi;
 			uint64_t newfd = reg.rsi;
 			if(oldfd > FD_SIZE || newfd > FD_SIZE){
@@ -493,6 +665,7 @@ int64_t isr_handler(handler_reg volatile reg){
 				goto sys_call_finally;
 			}
 			if(current_process->open_fd[newfd] != 0){
+				// TODO: close newfd instead
 				reg.rax = (uint64_t)-1;
 				goto sys_call_finally;
 			}
@@ -506,19 +679,13 @@ int64_t isr_handler(handler_reg volatile reg){
 			oldfde->file_entry->open_count++;
 			reg.rax = 0;
 			
-		}else if(reg.rax == 12){
-			// sys_test_ioctl
-			// uint64_t fd = reg.rdi;
-			uint64_t op = reg.rsi;
-			uint64_t arg = reg.rdx;
-			if(op == TIOCSPGRP){
-				// TODO: check fd points to
-				foreground_pid = arg;
-				reg.rax = 0;
-			}else{
-				kprintf("warning: non supported ioctl operation\n");
-				reg.rax = (uint64_t)-1;
-			}
+		}else if(reg.rax == 123){
+			// int sys_alarm(int seconds);
+			uint64_t seconds = reg.rdi;
+			register_to_trigger_alarm(current_process, seconds * PIT_FREQUENCY);
+			
+		}else if(reg.rax == 248){
+			ret = 1;
 		}else if(reg.rax == 249){
 			// test_kernel_read_block
 			uint64_t* user_buffer = (uint64_t*)reg.rdx; // buffer
@@ -550,6 +717,7 @@ int64_t isr_handler(handler_reg volatile reg){
 			read_to_page->used_by = 0;
 			reg.rax = (uint64_t)0;
 			// kprintf("DEBUG: kernel wait ends\n");
+			
 		}else if(reg.rax == 250){
 			// test_kernel_write_block
 			uint64_t* user_buffer = (uint64_t*)reg.rdx; // buffer
@@ -574,6 +742,7 @@ int64_t isr_handler(handler_reg volatile reg){
 			__asm__ volatile ("int $0x81;");
 			reg.rax = (uint64_t)0;
 			// kprintf("DEBUG: kernel wait ends\n");
+			
 		}else if(reg.rax == 251){
 			// test_kernel_wait
 			kernel_space_task_file.type = TASK_REG_WAIT;
@@ -625,7 +794,8 @@ int64_t isr_handler(handler_reg volatile reg){
 		__asm__ volatile("movq %%cr3, %0":"=r"(program_cr3):);
 		uint64_t requested_addr;
 		__asm__ volatile("movq %%cr2, %0":"=r"(requested_addr):);
-		kprintf("DEBUG: Page Fault occurred. Fault num:%d, cr3:%x, cr2:%x\n", reg.err_num, program_cr3, requested_addr);
+		kprintf("DEBUG: PF. fn:%d, c3:%x, %d, c2:%x, rip:%x\n", reg.err_num, program_cr3, current_process->id, requested_addr, reg.ret_rip);
+		assert(current_process != 0, "no process exist at page fault handler\n");
 		// TODO: check if this is a kernel page fault
 		kernel_space_task_file.type = TASK_PROC_PAGE_FAULT_HANDLE;
 		kernel_space_task_file.param[0] = reg.err_num;
@@ -659,12 +829,12 @@ void kernel_space_handler(struct kernel_task_return_reg reg){
 	}else if(kernel_space_task_file.type == TASK_PROC_PAGE_FAULT_HANDLE){
 		uint64_t err_num = kernel_space_task_file.param[0];
 		uint64_t requested_addr = kernel_space_task_file.param[1];
-		if(err_num == 7 && check_and_handle_rw_page_fault(current_process, requested_addr)){
+		if((err_num == 7 || err_num == 5) && check_and_handle_rw_page_fault(current_process, requested_addr)){
 			// kprintf("DEBUG: shared page duplicated\n");
-		}else if(requested_addr < current_process->heap_break && requested_addr > current_process->heap_start){
+		}else if(requested_addr < current_process->heap_break && requested_addr >= current_process->heap_start){
 			// if the requested address falls in a resonable range of heap
 			add_page_for_process(current_process, requested_addr, 1, 2);
-		}else if(requested_addr <= (uint64_t)process_initial_rsp && requested_addr >= (current_process->rsp_current-8192)){
+		}else if(requested_addr <= (uint64_t)process_initial_rsp && requested_addr >= (current_process->rsp_current-0x4000)){
 			// if the requested address falls in a resonable range for stack growth
 			add_page_for_process(current_process, requested_addr, 1, 2);
 			current_process->rsp_current = requested_addr;
@@ -672,6 +842,7 @@ void kernel_space_handler(struct kernel_task_return_reg reg){
 			kprintf("unable to handle Page Fault for process: %d\n", current_process->id);
 			if(current_process->sig_handler){
 				current_process->sig_pending = SIGSEGV;
+				current_process->on_hold = 0;
 			}else{
 				current_process->on_hold = 1;
 				current_process->terminated = 1;

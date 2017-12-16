@@ -3,6 +3,8 @@
 
 #include <sys/defs.h>
 
+int _init(int argc, char *argv[], char *envp[]);
+
 int main(int argc, char *argv[], char *envp[]);
 void exit(int status);
 

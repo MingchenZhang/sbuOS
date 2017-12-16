@@ -153,6 +153,19 @@ int create_file_in_disk(char* path){
 	}
 }
 
+dirent_sys list_next_file(char* dir_path, int next_i){
+	uint64_t file_offset = tarfs_find_offset(dir_path);
+	if(file_offset || (dir_path[0] == '/' && dir_path[1] == 0)){
+		// this is a tarfs dir path
+		dirent_sys dirent = next_tarfs_file(dir_path, next_i);
+		return dirent;
+	}else{
+		kprintf("DEBUG: no disk list file support\n");
+	}
+	dirent_sys ret;
+	return ret;
+}
+
 file_table_entry* file_open_read(char* path){
 	uint64_t file_offset = tarfs_find_offset(path);
 	if(file_offset){
@@ -340,11 +353,51 @@ int file_close(file_table_entry* file){
 	return 1;
 }
 
+static void str_collapse(char* dest, char* src){
+    int i=0;
+    for(; src[i]; i++){
+        dest[i] = src[i];
+    }
+    dest[i] = 0;
+}
+
+static char* shorten_path(char* path){
+	// deal with dot path
+	for(int i=0; path[i]; i++){
+		if(path[i] == '.' && (path[i+1] == '/' || path[i+1] == 0)){
+		    // there is a 'this' directory path
+		    if(path[i+1] == 0){
+		        path[i] = 0;
+		    }
+		    str_collapse(path+i, path+i+2);
+		    
+		}
+		if(path[i] == '.' && path[i+1] == '.' && (path[i+2] == '/' || path[i+2] == 0)){
+		    // go search for previous dir
+		    int j=i-2;
+		    for(; j>=0; j--){
+		        if(path[j] == '/') break;
+		    }
+		    if(j<0){
+		        // no previous dir
+		        if( path[i+2] != 0) str_collapse(path+i, path+i+3);
+		        else path[i] = 0;
+		    }else if(path[j] == '/'){
+		        if( path[i+2] != 0) str_collapse(path+j+1, path+i+3);
+		        else path[j+1] = 0;
+		        i = j;
+		    }
+		}
+	}
+	return path;
+}
+
 char* calculate_path(char* base, char* relative_path){
 	uint32_t len = strlen(relative_path);
 	if(relative_path[0] == '/'){
 		char* new_path = sf_calloc(len+1, 1);
 		memcpy(new_path, relative_path, len);
+		shorten_path(new_path);
 		return new_path;
 	}else{
 		uint32_t base_len = strlen(base);
@@ -353,13 +406,16 @@ char* calculate_path(char* base, char* relative_path){
 			memcpy(new_path, base, base_len);
 			new_path[base_len] = '/';
 			memcpy(new_path+base_len+1, relative_path, len);
+			shorten_path(new_path);
 			return new_path;
 		}else{
 			char* new_path = sf_calloc(base_len+len+1, 1);
 			memcpy(new_path, base, base_len);
 			memcpy(new_path+base_len, relative_path, len);
+			shorten_path(new_path);
 			return new_path;
 		}
 		
 	}
 }
+

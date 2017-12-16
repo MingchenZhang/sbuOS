@@ -6,6 +6,8 @@
 #include <sys/kprintf.h>
 #include <sys/idt.h>
 
+#include <signal.h>
+
 waiter* first_waiter = 0;
 
 void register_to_be_waken(Process* proc, uint64_t ticks_to_wake){
@@ -61,7 +63,7 @@ void tick_timer_update(){
 	if(cursor->ticks_to_wake-- == 0){
 		// kprintf("DEBUG: tick_timer_update: wake up %d\n", cursor->next->proc->id);
 		if(cursor->is_alarm) cursor->proc->sig_pending = SIGALRM;
-		else cursor->proc->on_hold = 0;
+		cursor->proc->on_hold = 0;
 		first_waiter = cursor->next;
 		sf_free(cursor);
 		if(!first_waiter) return;
@@ -71,7 +73,7 @@ void tick_timer_update(){
 		if(cursor->next->ticks_to_wake-- == 0){
 			// kprintf("DEBUG: tick_timer_update: wake up %d\n", cursor->next->proc->id);
 			if(cursor->is_alarm) cursor->proc->sig_pending = SIGALRM;
-			else cursor->proc->on_hold = 0;
+			cursor->proc->on_hold = 0;
 			waiter* to_be_removed = cursor->next;
 			cursor->next = to_be_removed->next;
 			sf_free(to_be_removed);

@@ -13,7 +13,7 @@
 #include <sys/thread/kthread.h>
 #include <sys/terminal.h>
 
-#define INITIAL_STACK_SIZE 8192
+#define INITIAL_STACK_SIZE 0x4000
 uint8_t initial_stack[INITIAL_STACK_SIZE]__attribute__((aligned(16)));
 uint32_t* loader_stack;
 extern char kernmem, physbase;
@@ -65,18 +65,9 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 	
 	// test_wp3();
 	
+	// scan_tarfs();
+	
 	// while(1); // stop here
-	
-	// char* buffer = (void*)0x1000000;
-	// int64_t readed = tarfs_read("bin/cat", buffer, 512);
-	// if(readed >=0 ){
-		// kprintf("tarfs_read reads %d bytes\n", readed);
-		// while(1) __asm__("hlt;");
-	// }else{
-		// kprintf("tarfs_read failed\n");
-	// }
-	
-	// while(1) __asm__("hlt;");
 	
 	{
 		program_section* result;
@@ -86,42 +77,6 @@ void start(uint32_t *modulep, void *physbase, void *physfree)
 		}
 		spawn_process(result, "/bin/init");
 	}
-	
-	// {
-		// program_section* result;
-		// if(!(result = read_elf_tarfs("bin/test"))) {
-			// kprintf("read_elf_tarfs failed\n");
-			// while(1) __asm__("hlt;");
-		// }
-		// spawn_process(result, "bin/test");
-	// }
-	
-	// {
-		// program_section* result;
-		// if(!(result = read_elf_tarfs("bin/test2"))) {
-			// kprintf("read_elf_tarfs failed\n");
-			// while(1) __asm__("hlt;");
-		// }
-		// spawn_process(result, "bin/test2");
-	// }
-	
-	// {
-		// program_section* result;
-		// if(!(result = read_elf_tarfs("bin/test3"))) {
-			// kprintf("read_elf_tarfs failed\n");
-			// while(1) __asm__("hlt;");
-		// }
-		// spawn_process(result, "bin/test3");
-	// }
-	
-	// {
-		// program_section* result;
-		// if(!(result = read_elf_tarfs("bin/fork_test"))) {
-			// kprintf("read_elf_tarfs failed\n");
-			// while(1) __asm__("hlt;");
-		// }
-		// spawn_process(result, "bin/fork_test");
-	// }
 	
 	kprintf("threads created\n");
 	

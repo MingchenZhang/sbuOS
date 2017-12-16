@@ -14,5 +14,5 @@ void _start(void) {
 	argv = ((char**)argc_a)+1;
 	env = ((char**)argc_a)+argc+2;
 	environ = env;
-	exit(main(argc, argv, env));
+	exit(_init(argc, argv, env));
 }

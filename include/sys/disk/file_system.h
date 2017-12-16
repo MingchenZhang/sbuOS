@@ -5,7 +5,7 @@
 
 struct file_table_entry;
 
-#define BUFFER_SIZE 0x1000
+#define BUFFER_SIZE 2048
 #define FILE_TABLE_WAITER 4
 
 typedef struct file_table_entry file_table_entry;
@@ -13,6 +13,7 @@ typedef struct file_table_waiting file_table_waiting;
 typedef struct file_table_entry_pair file_table_entry_pair;
 typedef struct inode inode;
 typedef struct simple_fs_file_list simple_fs_file_list;
+typedef struct dirent_sys dirent_sys;
 
 struct file_table_waiting{
 	Process* waiter; // 0 if there is no waiter
@@ -52,9 +53,16 @@ struct simple_fs_file_list {
 	uint64_t lba;
 } __attribute__((packed)); 
 
+struct dirent_sys{
+	char result;
+	int inode;
+	char* name;
+};
+
 void init_file_system();
 int create_file_in_disk(char* path);
 inode* search_file_in_disk(char* path);
+dirent_sys list_next_file(char* dir_path, int next_i);
 file_table_entry* file_open_read(char* path);
 file_table_entry* file_open_write(char* path);
 void generate_entry_pair(file_table_entry** assign_to);

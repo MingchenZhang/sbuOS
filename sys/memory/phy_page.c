@@ -138,6 +138,8 @@ void* get_phy_page(uint32_t num, char used_by){
 			assert(c->used_by == 0, "assert: find_free_page_entry_many returned used address\n");
 			c->used_by = used_by;
 		}
+		// kprintf("(%x)", new_page->base);
+		memset(new_page->base, 0, 4096);
 		return new_page->base;
 		kprintf("PANIC: get_phy_page not support multiple pages yet\n");
 		panic_halt();
@@ -145,6 +147,8 @@ void* get_phy_page(uint32_t num, char used_by){
 		page_entry* new_page = find_free_page_entry();
 		new_page->used_by = used_by;
 		// kprintf("get_phy_page: allocated one at: %p\n", new_page->base);
+		// kprintf("(%x)", new_page->base);
+		memset(new_page->base, 0, 4096);
 		return new_page->base;
 	}
 }
@@ -238,12 +242,6 @@ void kernel_page_table_init(){
 	pml1->US = 0;
 	pml1->PDPE_addr = (uint64_t)PDP1 >> 12;
 	
-	PML4E* pml3 = PML4 + 509; // upper pml4 entry
-	pml3->P = 1;
-	pml3->RW = 1;
-	pml3->US = 0;
-	pml3->PDPE_addr = (uint64_t)0 >> 12; // direct simple map
-	
 	PML4E* pml2 = PML4 + 0; // lower pml4 entry
 	pml2->P = 1;
 	pml2->RW = 1;
@@ -304,6 +302,7 @@ void change_kernel_rsp0(uint64_t change_to){
 static void move_kbrk(PDE* pd, PTE* pt){
 	if(pt){ // just add a PT entry
 		void* new_page = get_phy_page(1, 2);
+		memset(new_page, 0, 4096);
 		pt->P = 1;
 		pt->RW = 1;
 		pt->US = 0;
@@ -311,6 +310,8 @@ static void move_kbrk(PDE* pd, PTE* pt){
 	}else{ // need to also add pd entry
 		void* new_page = get_phy_page(1, 2);
 		void* new_page_pt = get_phy_page(1, 2);
+		memset(new_page, 0, 4096);
+		memset(new_page_pt, 0, 4096);
 		pd->P = 1;
 		pd->RW = 1;
 		pd->US = 0;

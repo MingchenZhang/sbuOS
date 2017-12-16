@@ -2,6 +2,7 @@
 #define _TARFS_H
 
 #include <sys/defs.h>
+#include <sys/disk/file_system.h>
 
 extern char _binary_tarfs_start;
 extern char _binary_tarfs_end;
@@ -35,6 +36,8 @@ typedef struct tar_file_info{
 void init_tarfs(void* start, void* end);
 
 void scan_tarfs();
+
+dirent_sys next_tarfs_file(char* dir_path, int next_i);
 
 int64_t tarfs_read(char* file_path, void* buffer, int64_t size, int64_t offset);
 

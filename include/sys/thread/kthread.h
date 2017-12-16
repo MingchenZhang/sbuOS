@@ -30,6 +30,7 @@ typedef struct open_file_descriptor {
 
 struct Process{
 	uint32_t id;
+	Process* parent;
 	char* name;
 	uint64_t cr3;
 	struct Process* next;
@@ -42,13 +43,15 @@ struct Process{
 	uint64_t on_hold: 1;
 	uint64_t terminated: 1;
 	uint64_t cleaned: 1;
-	uint64_t ret_value;
+	int ret_value;
 	m_map* first_map;
 	open_file_descriptor* open_fd[FD_SIZE];
 	char* workdir;
 	uint64_t sig_pending;
 	uint64_t sig_handler;
 	handler_reg sig_saved_reg; // sig_saved_reg.int_num is 0x80 if the process is in signalled state, otherwise it should be zero
+	int32_t id_wait_for;
+	Process* id_wait_for_p;
 };
 
 struct m_map{

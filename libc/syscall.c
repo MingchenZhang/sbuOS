@@ -1,159 +1,296 @@
-#include <sys/defs.h>
+#include <syscall.h>
 #include <dirent.h>
-
-void sys_exit(int status);
-ssize_t sys_read(int fd, void *buf, size_t count);
-ssize_t sys_write(int fd, const void *buf, size_t count);
-int sys_close(int fd);
-int sys_pipe(int pipefd[2]);
-int sys_dup2(int oldfd, int newfd);
-pid_t sys_fork();
-int sys_execve(const char *filename, char *const argv[], char *const envp[]);
-int sys_waitpid(pid_t pid, int *stat_loc, int options);
-void* sys_mmap(void *addr, size_t len, int prot, int flags, int fildes, off_t off);
-int sys_chdir(const char *path);
-long int sys_brk(void* addr);
-int sys_open(char* path, int flags, unsigned short mode);
-int sys_old_readdir(unsigned int fd, struct dirent *dirp, unsigned int count);
-int sys_getdents(unsigned int fd, struct dirent *dirp, unsigned int count);
+#include <stdlib.h>
+#include <signal.h>
+#include <unistd.h>
+#include <debuglib.h>
 
 int errno = 0;
 
-void exit(int status){
-	sys_exit(status);
-}
+void (*handlers[64])(uint64_t);
 
-ssize_t read(int fd, void *buf, size_t count){
-	ssize_t ret = sys_read(fd, buf, count);
-	if(ret < 0){
-		errno = -ret;
-		return -1;
+struct dirent static_dirent;
+
+void default_sig_handler(uint64_t sig_num){
+	if(sig_num >= 64) sys_sig_return();
+	if(handlers[sig_num]){
+		(handlers[sig_num])(sig_num);
+	}else if(sig_num == SIGINT || sig_num == SIGSEGV){
+		exit(1);
 	}
-	return ret;
+	sys_sig_return();
+}
+int _init(int argc, char *argv[], char *envp[]){
+	sys_set_signal_handler(default_sig_handler);
+	return main(argc, argv, envp);
 }
 
-ssize_t write(int fd, const void *buf, size_t count) {
-	ssize_t ret = sys_write(fd, buf, count);
-	if(ret < 0){
-		errno = -ret;
-		return -1;
+DIR* opendir(const char *name){
+	DIR* p = malloc(sizeof(DIR));
+	// TODO: check dir existence
+	int i=0;
+	for(; name[i] && i<126; i++) p->path[i] = name[i];
+	if(p->path[i-1] != '/') {
+		p->path[i++] = '/';
 	}
-	return ret;
+	p->path[i] = 0;
+	p->index = 0;
+	return p;
 }
-
-int close(int fd) {
-	int ret = sys_close(fd);
-	if(ret < 0){
-		errno = -ret;
-		return -1;
-	}
-	return ret;
-}
-
-int pipe(int pipefd[2]){
-	int ret = sys_pipe(pipefd);
-	if(ret < 0){
-		errno = -ret;
-		return -1;
-	}
-	return ret;
-}
-
-int dup2(int oldfd, int newfd){
-	int ret = sys_dup2(oldfd, newfd);
-	if(ret < 0){
-		errno = -ret;
-		return -1;
-	}
-	return ret;
-}
-
-pid_t fork() {
-	int ret = sys_fork();
-	if(ret < 0){
-		errno = -ret;
-		return -1;
-	}
-	return ret;
-}
-
-int execve(const char *filename, char *const argv[], char *const envp[]) {
-	int ret = sys_execve(filename, argv, envp);
-	if(ret < 0){
-		errno = -ret;
-		return -1;
-	}
-	return ret;
-}
-
-int waitpid(pid_t pid, int *stat_loc, int options) {
-	int ret = sys_waitpid(pid, stat_loc, options);
-	if(ret < 0){
-		errno = -ret;
-		return -1;
-	}
-	return ret;
-}
-
-void *mmap(void *addr, size_t len, int prot, int flags, int fildes, off_t off) {
-	void* ret = sys_mmap(addr, len, prot, flags, fildes, off);
-	if(((long)ret) < 0 && ((long)ret) > -35){
-		errno = -(long)ret;
-		return (void*)-1;
-	}
-	return ret;
-}
-
-int chdir(const char *path){
-	int ret = sys_chdir(path);
-	if(ret < 0){
-		errno = -ret;
-		return -1;
-	}
-	return ret;
-}
-
-void* sbrk(unsigned long int inc){
-	void* ret;
-	if(inc == 0){
-		return (void*)sys_brk(0);
+struct dirent *readdir(DIR *dirp){
+	int64_t result = sys_list_files(dirp->path, &static_dirent, dirp->index);
+	if(result<0) {
+		errno = 0-result;
+		return 0;
 	}else{
-		void* cur_brk = (void*)sys_brk(0);
-		if((ret = (void*)sys_brk(cur_brk + inc))<0){
-			errno = (int)(long int)ret;
-			return (void*)-1;
-		}else{
-			return cur_brk;
+		dirp->index++;
+		return &static_dirent;
+	}
+}
+int closedir(DIR *dirp){
+	free(dirp);
+	return 0;
+}
+int kill(pid_t pid, int sig){
+	int64_t result = sys_signal(pid, (uint64_t)sig);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return 0;
+	}
+}
+sighandler_t signal(int signum, sighandler_t handler){
+	int result = sys_set_signal_handler( (void (*)(uint64_t))handler );
+	if(result<0) {
+		errno = 0-result;
+		return 0;
+	}else{
+		return handler;
+	}
+}
+int putchar(int c){
+	char buffer;
+	buffer = (char)c;
+	int64_t result = sys_write(1, &buffer, 1);
+	if(result!=1){
+		errno = 0-result;
+		return -1;
+	}else return 0;
+}
+int puts(const char *s){
+	int i=0;
+	for(;s[i] && i<1024; i++);
+	int64_t result = sys_write(1, s, i);
+	if(result!=i){
+		errno = 0-result;
+		return -1;
+	}else return 0;
+}
+char *gets(char *s){
+	int i=0;
+	while(1){
+		int64_t result = sys_read(0, s+i, 1);
+		if(result!=1){
+			if(i>0){
+				return s;
+			}else{
+				return 0;
+			}
+		}
+		if(s[i] == '\n'){
+			s[i] = 0;
+			return s;
 		}
 	}
 }
-
-int open(char *pathname, int flags){
-	int ret = sys_open(pathname, flags, 0);
-	if(ret < 0){
-		errno = -ret;
+void exit(int status){
+	sys_exit(status);
+}
+int open(const char *pathname, int flags){
+	int64_t result = sys_open(pathname, (uint64_t)flags);
+	if(result<0) {
+		errno = 0-result;
 		return -1;
+	}else{
+		return result;
 	}
-	return ret;
+}
+int close(int fd){
+	int64_t result = sys_close(fd);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return 0;
+	}
+}
+ssize_t read(int fd, void *buf, size_t count){
+	int64_t result = sys_read((uint64_t)fd, buf, count);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return result;
+	}
+}
+ssize_t write(int fd, const void *buf, size_t count){
+	int64_t result = sys_write((uint64_t)fd, buf, count);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return result;
+	}
+}
+int unlink(const char *pathname){
+	int64_t result = sys_unlink(pathname);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return 0;
+	}
+}
+int chdir(const char *path){
+	int64_t result = sys_chdir(path);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return 0;
+	}
+}
+char *getcwd(char *buf, size_t size){
+	int64_t result = sys_getdir(buf, size);
+	if(result<0) {
+		errno = 0-result;
+		return 0;
+	}else{
+		return buf;
+	}
+}
+pid_t fork(){
+	int64_t result = sys_fork();
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return (pid_t)result;
+	}
+}
+int execvpe(const char *file, char *const argv[], char *const envp[]){
+	int64_t result = sys_exec(file, argv, envp);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return 0;
+	}
+}
+pid_t wait(int *ret_status){
+	int64_t result = sys_wait((int64_t)-1, ret_status);
+	if(result<0) {
+		errno = 0-result;
+		ret_status[0] = 0;
+		return -1;
+	}else{
+		return 0;
+	}
+}
+int waitpid(int pid, int *ret_status){
+	int64_t result = sys_wait((int64_t)pid, ret_status);
+	if(result<0) {
+		errno = 0-result;
+		ret_status[0] = 0;
+		return -1;
+	}else{
+		return 0;
+	}
+}
+unsigned int sleep(unsigned int seconds){
+	uint64_t seconds_ = (uint64_t)seconds;
+	sys_pause(seconds_ * 1000000);
+	return 0;
+}
+pid_t getpid(void){
+	return sys_getpid();
+}
+pid_t getppid(void){
+	return sys_getpid();
+}
+off_t lseek(int fd, off_t offset, int whence){
+	int64_t result = sys_lseek((uint64_t) fd, offset);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return result;
+	}
+}
+int mkdir(const char *pathname, mode_t mode){
+	int64_t result = sys_mkdir(pathname);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return 0;
+	}
+}
+int pipe(int pipefd[2]){
+	int64_t result = sys_pipe(pipefd);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return 0;
+	}
+}
+int ioctl(int fd, uint64_t op, uint64_t arg){
+	int64_t result = sys_ioctl(fd, op, arg);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return 0;
+	}
+}
+void* sbrk(unsigned long int inc){
+	static void* current_brk;
+	if(current_brk == 0) current_brk = (void*)sys_brk(0);
+	if(inc == 0){
+		return current_brk;
+	}else{
+		inc = ((inc-1)/4096+1)*4096;
+		if(sys_brk((uint64_t)current_brk + inc) == 0){
+			return current_brk;
+		}else{
+			return 0;
+		}
+	}
+}
+int64_t brk(unsigned long int to){
+	return sys_brk(to);
+}
+int dup2(int oldfd, int newfd){
+	int64_t result = sys_dup(oldfd, newfd);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return 0;
+	}
+}
+int execvp(const char *file, char *const argv[]){
+	return execvpe(file, argv, environ);
+}
+void yield(){
+	sys_yield();
 }
 
-int readdir_fd(unsigned int fd, struct dirent *dirp, 
-            unsigned int count){
-	int ret = sys_old_readdir(fd, dirp, count);
-	if(ret < 0){
-		errno = -ret;
-		return -1;
-	}
-	return ret;
+void _print(char* str){
+	sys_print(str);
 }
-
-int getdents(unsigned int fd, struct dirent *dirp, 
-            unsigned int count){
-	int ret = sys_getdents(fd, dirp, count);
-	if(ret < 0){
-		errno = -ret;
-		return -1;
-	}
-	return ret;
+void _print_num(long number){
+	sys_print_num(number);
 }
-

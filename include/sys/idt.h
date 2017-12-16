@@ -41,15 +41,6 @@ kernel_space_task kernel_space_task_file;
 #define TASK_RW_DISK_BLOCK 9
 #define TASK_CP_PAGE_MALLOC 10
 
-#define SIGINT 2
-#define SIGKILL 9
-#define SIGSEGV 11
-#define SIGALRM 14
-
-// ioctl op:
-#define TIOCGPGRP 101
-#define TIOCSPGRP 102
-
 int64_t isr_handler(handler_reg);
 
 extern void kernel_space_handler_wrapper();

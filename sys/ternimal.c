@@ -6,6 +6,8 @@
 #include <sys/idt.h>
 #include <sys/terminal.h>
 
+#include <signal.h>
+
 #define INPUT_BUFFER_LENGTH 256
 
 char* terminal_buffer;
