@@ -44,7 +44,7 @@ int main(int argc, char *argv[], char *envp[]){
 		exit(0);
 	}else{ // child
 		// _print("init child \n");
-		execvpe("stack_test", _argv, _envp);
+		execvpe("sbush", _argv, _envp);
 		// if(sys_test_fork()){
 			// sys_test_exec("test3", _argv, _envp);
 		// }else{

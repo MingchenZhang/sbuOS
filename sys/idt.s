@@ -30,7 +30,11 @@ ISR_HANDLER_WRAPER:
 	pushq %rax
 	pushq %r8
 	pushq %r9
-	pushq %rbp 
+	pushq %r12
+	pushq %r13
+	pushq %r14
+	pushq %r15
+	pushq %rbp
 	
 	# when changed: also change those: two lines below, stack creation offset in thread creation, idt.h reg struct
 	movq %rsp,%rdi # set the first argument
@@ -44,6 +48,10 @@ ISR_HANDLER_WRAPER:
 	AFTER_CONTEXT_SWITCH:
 	
 	popq %rbp
+	popq %r15
+	popq %r14
+	popq %r13
+	popq %r12
 	popq %r9
 	popq %r8
 	popq %rax
@@ -105,6 +113,10 @@ isr129:
 	pushq %rax
 	pushq %r8
 	pushq %r9
+	pushq %r12
+	pushq %r13
+	pushq %r14
+	pushq %r15
 	pushq %rbp 
 	
 	movq %cr3, %rdi
@@ -119,6 +131,10 @@ isr129:
 	movq %rbp, %cr3
 	
 	popq %rbp
+	popq %r15
+	popq %r14
+	popq %r13
+	popq %r12
 	popq %r9
 	popq %r8
 	popq %rax

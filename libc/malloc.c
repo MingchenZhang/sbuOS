@@ -5,7 +5,11 @@
 #include <sys/defs.h>
 #include <debuglib.h>
 
-/*
+#define SIMPLE_MALLOC
+// #define COMPLEX_MALLOC
+
+#ifdef COMPLEX_MALLOC
+
 #define bool int
 #define size_t uint64_t
 #define false 0
@@ -423,7 +427,10 @@ void free(void *ptr){
 	
 }
 
-*/
+#endif
+
+#ifdef SIMPLE_MALLOC
+
 uint64_t current_brk = 0;
 uint64_t allocated = 0;
 
@@ -444,3 +451,5 @@ void* malloc(size_t size){
 void free(void *ptr){
 	
 }
+
+#endif

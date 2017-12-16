@@ -342,7 +342,6 @@ int64_t isr_handler(handler_reg volatile reg){
 					current_process->on_hold = 1;
 					// sleep this process in kernel
 					trigger_ctx_switch();
-					kprintf("sssss");
 					if(current_process->sig_pending){
 						break;
 					}

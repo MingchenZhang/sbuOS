@@ -14,7 +14,7 @@ int main(int argc, char *argv[], char *envp[]){
 	}
 	
 	int child = fork();
-	if(!child){
+	if(child){
 		_print("parent start execute\n");
 		execvpe("cat", _argv, _envp);
 	}else{
