@@ -19,7 +19,7 @@ int chdir(const char *path);
 char *getcwd(char *buf, size_t size);
 
 pid_t fork();
-int execve(char *filename, char *const argv[], char *const envp[]); // actual syscall
+int execve(const char *filename, char *const argv[], char *const envp[]); // actual syscall
 int execvp(const char *file, char *const argv[]);
 int execvpe(const char *file, char *const argv[], char *const envp[]); // required
 pid_t wait(int *status);
@@ -40,5 +40,10 @@ int dup2(int oldfd, int newfd);
 
 void* sbrk(unsigned long int inc);
 int64_t brk(unsigned long int to);
+
+int list_pid(int* buffer, size_t size);
+int pid_name(char* buffer, int pid, size_t size);
+
+int alarm(int seconds);
 
 #endif

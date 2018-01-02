@@ -21,3 +21,7 @@ gdb ./kernel
 
 At the (gdb) prompt, connect with:
 target remote localhost:9999
+
+
+Submission Note:
+see the makefile.config

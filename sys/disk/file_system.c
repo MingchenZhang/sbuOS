@@ -31,7 +31,10 @@ void* read_disk_block(uint8_t disk_i, Process* proc, uint64_t block){
 	kernel_space_task_file.param[1] = (uint64_t)buffer;
 	kernel_space_task_file.param[2] = 1; // page_to_malloc
 	kernel_space_handler_wrapper();
-	read_to_page->used_by = 0;
+	kernel_space_task_file.type = TASK_PAGE_USED_BY;
+	kernel_space_task_file.param[0] = (uint64_t)read_to_page;
+	kernel_space_task_file.param[1] = (uint64_t)0;
+	kernel_space_handler_wrapper();
 	return buffer;
 }
 
@@ -108,8 +111,8 @@ void init_file_system(){
 		}
 		return;
 	}
-	disk_block_free = info[2];
-	disk_size = info[3];
+	disk_size = info[2];
+	disk_block_free = info[3];
 	return;
 }
 
@@ -153,6 +156,30 @@ int create_file_in_disk(char* path){
 	}
 }
 
+dirent_sys directory_compare(char* file, char* dir_path){
+	char* sub_name = file;
+	if(sub_name[0] == 0) goto no_match;
+	int i = 0;
+	for(; dir_path[i]; i++){
+		if(dir_path[i] != sub_name[i]) goto no_match;
+	}
+	int file_name_start = i;
+	for(; sub_name[i]; i++){
+		if(sub_name[i] == '/' && sub_name[i+1] != 0) goto no_match;
+	}
+	char* filename = sf_malloc(i-file_name_start+4);
+	memcpy(filename, sub_name + file_name_start, i-file_name_start+1);
+	dirent_sys ret;
+	ret.result = 1;
+	ret.inode = 0;
+	ret.name = filename;
+	return ret;
+	
+	no_match:
+	ret.result = 0;
+	return ret;
+}
+
 dirent_sys list_next_file(char* dir_path, int next_i){
 	uint64_t file_offset = tarfs_find_offset(dir_path);
 	if(file_offset || (dir_path[0] == '/' && dir_path[1] == 0)){
@@ -160,7 +187,40 @@ dirent_sys list_next_file(char* dir_path, int next_i){
 		dirent_sys dirent = next_tarfs_file(dir_path, next_i);
 		return dirent;
 	}else{
-		kprintf("DEBUG: no disk list file support\n");
+		uint64_t lba_c = 1;
+		uint64_t counter = 0;
+		while(1){
+			void* readed = read_disk_block(DEAULT_DISK_INDEX, current_process, lba_c);
+			if(!readed){
+				sf_free(readed);
+				dirent_sys ret;
+				ret.result = 0;
+				return ret;
+			}
+			simple_fs_file_list* list = (simple_fs_file_list*)readed;
+			int i=0;
+			for(; i<31; i++){
+				if((list[i].attr & (1L<<63))){
+					dirent_sys result = directory_compare(list[i].name, dir_path);
+					if(!result.result){
+						continue;
+					}
+					if(counter == next_i){
+						return result;
+					}
+					counter++;
+					sf_free(result.name);
+				}
+			}
+			lba_c = *(uint64_t*)(list + i);
+			sf_free(readed);
+			if(lba_c == 0){
+				dirent_sys ret;
+				ret.result = 0;
+				return ret;
+			}
+		}
+		
 	}
 	dirent_sys ret;
 	return ret;
@@ -174,7 +234,7 @@ file_table_entry* file_open_read(char* path){
 		file->io_type = 3;
 		uint32_t path_len = strlen(path);
 		char* path_str = sf_malloc(sizeof(char) * path_len +1);
-		memcpy(path_str, path, path_len);
+		memcpy(path_str, path, path_len+1);
 		file->path_str = path_str;
 		file->in_from = file_offset;
 		file->open_count = 1;
@@ -255,6 +315,9 @@ int file_read(file_table_entry* file, Process* initiator, uint8_t* read_buffer, 
 		file->offset += readed;
 		return readed;
 	}else if(file->io_type == 2){ // entry pair read
+		if(((file_table_entry*)file->in_from)->open_count <= 0 && file->buffer_p_c-1 == file->buffer_c_c){
+			return -1;
+		}
 		int read_count = 0;
 		for(; file->buffer_p_c-1 != file->buffer_c_c && size!=0; size--, read_buffer++, read_count++){
 			file->buffer_c_c++;
@@ -346,7 +409,8 @@ void file_set_offset(file_table_entry* file, uint64_t offset){
 
 int file_close(file_table_entry* file){
 	if(--file->open_count <= 0){
-		sf_free(file);
+		// not freeing it, because i'm sucks at it.
+		// sf_free(file);
 	}
 	// TODO: also free path_str
 	// TODO: wake up all waiter

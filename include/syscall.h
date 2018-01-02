@@ -63,4 +63,8 @@ void sys_print_num(long number);
 
 void sys_yield();
 
+int sys_list_pid(int* buffer, size_t size);
+
+int sys_pid_name(char* buffer, int pid, size_t size);
+
 #endif

@@ -13,7 +13,7 @@
 #include <sys/thread/kthread.h>
 #include <sys/terminal.h>
 
-#define INITIAL_STACK_SIZE 0x4000
+#define INITIAL_STACK_SIZE 0x8000
 uint8_t initial_stack[INITIAL_STACK_SIZE]__attribute__((aligned(16)));
 uint32_t* loader_stack;
 extern char kernmem, physbase;

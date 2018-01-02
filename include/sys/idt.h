@@ -40,6 +40,7 @@ kernel_space_task kernel_space_task_file;
 #define TASK_REPLACE_PROCESS 8
 #define TASK_RW_DISK_BLOCK 9
 #define TASK_CP_PAGE_MALLOC 10
+#define TASK_PAGE_USED_BY 11
 
 int64_t isr_handler(handler_reg);
 

@@ -1,12 +1,15 @@
 #include <stdio.h>
 #include <unistd.h>
 
+#include <debuglib.h>
+
 #include "include/sbush_process.h"
 #include "include/sbush_exec.h"
 
 void print_prompt() {
 	int target = _search_env(environ, "PS1");
 	if(target < 0){
+		// _print("sbush> ");
 		write(1, "sbush> ", 7);
 	}else{
 		char prompt[128], n[128];
@@ -35,6 +38,8 @@ int main(int argc, char *argv[], char *envp[]){
 				line[index] = 0;
 				if(line[0] == '#' && line[1] == '!'){// shebang
 				}else{
+					puts(line);
+					putchar('\n');
 					ProcessCommand(line);
 				}
 				break;
@@ -43,6 +48,8 @@ int main(int argc, char *argv[], char *envp[]){
 				line[index] = 0;
 				if(line[0] == '#' && line[1] == '!'){// shebang
 				}else{
+					puts(line);
+					putchar('\n');
 					ProcessCommand(line);
 				}
 				index = -1;
@@ -64,6 +71,8 @@ int main(int argc, char *argv[], char *envp[]){
 		  if(*(input + pointer) == '\n'){
 			  *(input + pointer) = 0;
 			  pointer = 0;
+				puts(input);
+				putchar('\n');
 			  if(!ProcessCommand(input)){
 				  puts("unable to parse command.\n");
 			  }

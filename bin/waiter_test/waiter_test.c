@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <unistd.h>
+#include <stdio.h>
 #include <debuglib.h>
 #include <sys/ioctl.h>
 
@@ -32,15 +33,11 @@ int main(int argc, char *argv[], char *envp[]){
 		// _print("init parent \n");
 		ioctl(0, TIOCSPGRP, child_pid);
 		int status;
-		_print("waiting for: ");
-		_print_num(child_pid);
-		_print("\n");
+		puts("waiting for bash...\n");
 		wait(&status);
 		int this_pid = getpid();
 		ioctl(0, TIOCSPGRP, this_pid);
-		_print("wait returned, status: ");
-		_print_num(status);
-		_print("\n");
+		puts("\nbash terminated");
 		exit(0);
 	}else{ // child
 		// _print("init child \n");
@@ -50,6 +47,6 @@ int main(int argc, char *argv[], char *envp[]){
 		// }else{
 			// sys_test_exec("test_daemon", _argv, _envp);
 		// }
-		_print("sys_test_exec returned!!!\n");
+		puts("sys_test_exec returned!!!\n");
 	}
 }

@@ -3,6 +3,7 @@
 #include <stdlib.h> // exit
 #include <unistd.h> // pipe, fork, dup2, execvp, chdir
 #include <debuglib.h>
+#include <sys/ioctl.h>
 
 #include "include/sbush_process.h"
 #include "include/sbush_exec.h"
@@ -60,20 +61,24 @@ void execute(Job job) {
 			if(proc_cursor->fd_out >= 0){
 				close(proc_cursor->fd_out);
 			}
+			// _print("---2---");
 			proc_cursor->process_id = pid;
 			proc_cursor = proc_cursor->next;
 		}
 	}
 	
 	// wait forked children
+	// puts("bash: starts waiting\n");
+	
 	if(!job.isBackground){
 		proc_cursor = job.first_process;
 		while(proc_cursor && proc_cursor->process_id >= 0){
 			int status;
+			ioctl(0, TIOCSPGRP, proc_cursor->process_id);
 			if(waitpid(proc_cursor->process_id, &status) < 0){ // WUNTRACED == 2
 				puts("failed on waitpid()\n");
-				//perror("reason");
 			}
+			ioctl(0, TIOCSPGRP, getpid());
 			proc_cursor = proc_cursor->next;
 		}
 	}

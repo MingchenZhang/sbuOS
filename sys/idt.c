@@ -324,7 +324,6 @@ int64_t isr_handler(handler_reg volatile reg){
 			int written = 0;
 			while(1){
 				written = file_read(file_entry, current_process, (uint8_t*)(uint64_t*)buffer, to_write);
-				// assume the file pair has not been closed
 				if(written == 0){
 					// TODO: increment open count on file before sleep
 					file_table_waiting* waiter = sf_calloc(sizeof(file_table_waiting), 1);
@@ -345,6 +344,10 @@ int64_t isr_handler(handler_reg volatile reg){
 					if(current_process->sig_pending){
 						break;
 					}
+				}else if(written == -1){
+					// file has been closed
+					reg.rax = 0;
+					goto sys_call_finally;
 				}else{
 					break;
 				}
@@ -396,18 +399,27 @@ int64_t isr_handler(handler_reg volatile reg){
 			reg.rax = 0;
 		}else if(reg.rax == 107){
 			// int64_t sys_unlink(char * pathname);
+			char* dir_path = (char*)reg.rdi;
+			char* abs_path = calculate_path(current_process->workdir, dir_path);
+			dirent_sys de = list_next_file(abs_path, 0);
+			if(!de.result){
+				reg.rax = (uint64_t)-1;
+				sf_free(abs_path);
+				goto sys_call_finally;
+			}
+			sf_free(de.name);
+			sf_free(abs_path);
+			reg.rax = 0;
 			// TODO
 			reg.rax = 0;
 		}else if(reg.rax == 108){
 			// int64_t sys_chdir(char * path);
 			char* path = (char*)reg.rdi;
-			uint32_t len = strlen((char*)path);
 			char* old_path = current_process->workdir;
+			char* abs_path = calculate_path(old_path, path);
 			sf_free(old_path);
-			char* new_path = sf_malloc(len+1);
-			for(int i=0; path[i]; i++) new_path[i] = path[i];
-			new_path[len-1] = 0;
-			current_process->workdir = new_path;
+			current_process->workdir = abs_path;
+			kprintf("DEUBG: cwd change to %s\n", abs_path);
 			reg.rax = 0;
 		}else if(reg.rax == 109){
 			// int64_t sys_getdir(char* buffer, uint64_t size);
@@ -433,18 +445,65 @@ int64_t isr_handler(handler_reg volatile reg){
 			char* path = (char*)(uint64_t*)reg.rdi;
 			char** argv = (char**)(uint64_t*)reg.rsi;
 			char** envp = (char**)(uint64_t*)reg.rdx;
+			// declare some arguments for script executable
+			char is_script = 0;
+			char* script_argv[] = {"", 0, 0};
+			uint8_t* script_int_path;
 			// translate relative path
 			char* abs_path = calculate_path(current_process->workdir, path);
 			// read the elf file sections into memory
+			// kprintf("DEBUG: executing %s\n", abs_path);
 			file_table_entry* file = file_open_read(abs_path); // TODO: this needs to be a kernel task
 			if(!file){
 				reg.rax = (uint64_t)-EACCES;
+				sf_free(abs_path);
 				goto sys_call_finally;
 			}
 			program_section* sections = read_elf(file);
 			if(!sections){
-				reg.rax = (uint64_t)-ENOEXEC;
-				goto sys_call_finally;
+				file_set_offset(file, 0);
+				script_int_path = sf_malloc(128);
+				int readed = file_read(file, current_process, script_int_path, 128);
+				if(readed < 0){
+					reg.rax = (uint64_t)-ENOEXEC;
+					sf_free(abs_path);
+					goto sys_call_finally;
+				}
+				if(script_int_path[0] == '#' && script_int_path[1] == '!'){ // shebang
+					// kprintf("shebang found\n");
+					int space;
+					for(space = 2; script_int_path[space] == ' '; space++);
+					int i=0;
+					for(; script_int_path[space] != 0 && script_int_path[space] != '\n'; space++, i++){
+						script_int_path[i] = script_int_path[space];
+					}
+					script_int_path[i] = 0;
+					script_argv[1] = abs_path;
+					is_script = 1;
+				}else{
+					reg.rax = (uint64_t)-ENOEXEC;
+					sf_free(abs_path);
+					goto sys_call_finally;
+				}
+			}
+			if(is_script){
+				abs_path = (char*)script_int_path;
+				argv = script_argv;
+				file = file_open_read(abs_path);
+				// kprintf("script: int:%s, script:%s\n", abs_path, script_argv[1]);
+				if(!file){
+					reg.rax = (uint64_t)-EACCES;
+					sf_free(abs_path);
+					sf_free(script_argv[1]);
+					goto sys_call_finally;
+				}
+				sections = read_elf(file);
+				if(!sections){
+					reg.rax = (uint64_t)-ENOEXEC;
+					sf_free(abs_path);
+					sf_free(script_argv[1]);
+					goto sys_call_finally;
+				}
 			}
 			// start construct initial stack
 			uint64_t argc = 0;
@@ -535,23 +594,71 @@ int64_t isr_handler(handler_reg volatile reg){
 				*rsp_c = *rsp_c + (uint64_t)rsp;
 			}
 			// done
-			sf_free(abs_path);
+			current_process->name = abs_path;
+			if(is_script){
+				sf_free(script_argv[1]);
+			}
 			// kprintf("syscall: exec process loaded\n");
 			ret = 1;
 		}else if(reg.rax == 112){
 			// int64_t sys_wait(int64_t pid, int* status);
-			uint32_t pid = (uint32_t)reg.rdi;
+			int32_t pid = (int32_t)reg.rdi;
 			int* status_ret = (int*)reg.rsi;
-			// TODO: check if pid exist
-			current_process->id_wait_for = pid;
-			current_process->on_hold = 1;
-			current_process->id_wait_for_p = 0;
-			trigger_ctx_switch();
-			if(current_process->id_wait_for_p){
-				status_ret[0] = current_process->id_wait_for_p->ret_value;
+			Process dummy;
+			dummy.next = first_process;
+			Process* target_pre = 0;
+			Process* proc_c = &dummy;
+			while(proc_c->next){
+				if(proc_c->next->id == pid || (pid == -1 && proc_c->next->parent == current_process) ){
+					target_pre = proc_c;
+					break;
+				}
+				proc_c = proc_c->next;
 			}
-			sf_free(current_process->id_wait_for_p);
-			reg.rax = 0;
+			if(!target_pre){
+				reg.rax = (uint64_t)-EINVAL;
+				goto sys_call_finally;
+			}
+			Process* target = target_pre->next;
+			if(target->terminated){
+				status_ret[0] = target->ret_value;
+				// now remove process from schedule list
+				if(target_pre == &dummy){
+					first_process = 0;
+				}else{
+					target_pre->next = target->next;
+				}
+				sf_free(target);
+				reg.rax = 0;
+				goto sys_call_finally;
+			}
+			// if target has not terminated
+			while(1){
+				current_process->id_wait_for = pid;
+				current_process->on_hold = 1;
+				current_process->id_wait_for_p = 0;
+				trigger_ctx_switch();
+				if(current_process->id_wait_for_p){
+					// kprintf("DEBUG: waited\n");
+					assert(current_process->id_wait_for_p == target, "wait pid mismatch\n");
+					status_ret[0] = target->ret_value;
+					// now remove process from schedule list
+					dummy.next = first_process;
+					Process* proc_c = &dummy;
+					while(proc_c->next){
+						if(proc_c->next == target){
+							proc_c->next = proc_c->next->next;
+							break;
+						}
+						proc_c = proc_c->next;
+					}
+					sf_free(target);
+					reg.rax = 0;
+					goto sys_call_finally;
+				}else{
+					kprintf("DEBUG: wait failed\n");
+				}
+			}
 		}else if(reg.rax == 113){
 			// void sys_pause(uint64_t nano_second);
 			kernel_space_task_file.type = TASK_REG_WAIT;
@@ -602,11 +709,12 @@ int64_t isr_handler(handler_reg volatile reg){
 				goto sys_call_finally;
 			}
 			int infd = 0;
-			for(;infd<FD_SIZE && open_fd[infd]; infd++);
+			for(;(infd<FD_SIZE && open_fd[infd]) || infd == outfd; infd++);
 			if(infd == FD_SIZE) {
 				reg.rax = (uint64_t)-EMFILE;
 				goto sys_call_finally;
 			}
+			// kprintf("pipe infd: %d, outfd: %d\n", infd, outfd);
 			generate_entry_pair(tmp);
 			open_fd[outfd] = sf_malloc(sizeof(open_file_descriptor));
 			open_fd[infd] = sf_malloc(sizeof(open_file_descriptor));
@@ -642,9 +750,11 @@ int64_t isr_handler(handler_reg volatile reg){
 				reg.rax = (uint64_t)-EMFILE;
 				goto sys_call_finally;
 			}
-			file_close(current_process->open_fd[fd]->file_entry);
-			sf_free(current_process->open_fd[fd]);
-			current_process->open_fd[fd] = 0;
+			if(current_process->open_fd[fd]){
+				file_close(current_process->open_fd[fd]->file_entry);
+				sf_free(current_process->open_fd[fd]);
+				current_process->open_fd[fd] = 0;
+			}
 			reg.rax = 0;
 		}else if(reg.rax == 121){
 			// int64_t sys_sig_return();
@@ -664,9 +774,9 @@ int64_t isr_handler(handler_reg volatile reg){
 				goto sys_call_finally;
 			}
 			if(current_process->open_fd[newfd] != 0){
-				// TODO: close newfd instead
-				reg.rax = (uint64_t)-1;
-				goto sys_call_finally;
+				file_close(current_process->open_fd[newfd]->file_entry);
+				sf_free(current_process->open_fd[newfd]);
+				current_process->open_fd[newfd] = 0;
 			}
 			if(current_process->open_fd[oldfd] == 0){
 				reg.rax = (uint64_t)-1;
@@ -676,6 +786,7 @@ int64_t isr_handler(handler_reg volatile reg){
 			open_file_descriptor* newfde = sf_calloc(sizeof(open_file_descriptor), 1);
 			memcpy(newfde, oldfde, sizeof(open_file_descriptor));
 			oldfde->file_entry->open_count++;
+			current_process->open_fd[newfd] = newfde;
 			reg.rax = 0;
 			
 		}else if(reg.rax == 123){
@@ -683,6 +794,38 @@ int64_t isr_handler(handler_reg volatile reg){
 			uint64_t seconds = reg.rdi;
 			register_to_trigger_alarm(current_process, seconds * PIT_FREQUENCY);
 			
+		}else if(reg.rax == 124){
+			// int sys_list_pid(int* buffer, size_t size);
+			int* buffer = (int*)reg.rdi;
+			uint64_t size = reg.rsi;
+			Process* p = first_process;
+			uint64_t i=0;
+			while(p){
+				if(size == i) break;
+				buffer[i] = (int)p->id;
+				i++;
+				p = p->next;
+			}
+			reg.rax = i;
+			
+		}else if(reg.rax == 125){
+			// int sys_pid_name(char* buffer, int pid, size_t size);
+			char* buffer = (char*)reg.rdi;
+			int pid = (int)reg.rsi;
+			uint64_t size = reg.rdx;
+			Process* p = first_process;
+			while(p){
+				if(p->id == pid) break;
+				p = p->next;
+			}
+			if(p->id == pid){
+				int i=0;
+				for(; p->name[i] && i<size; i++) buffer[i] = p->name[i];
+				buffer[i] = 0;
+				reg.rax = 0;
+			}else{
+				reg.rax = (uint64_t)-1;
+			}
 		}else if(reg.rax == 248){
 			ret = 1;
 		}else if(reg.rax == 249){
@@ -713,7 +856,10 @@ int64_t isr_handler(handler_reg volatile reg){
 				user_buffer[i] = buffer[i];
 			}
 			sf_free(buffer);
-			read_to_page->used_by = 0;
+			kernel_space_task_file.type = TASK_PAGE_USED_BY;
+			kernel_space_task_file.param[0] = (uint64_t)read_to_page;
+			kernel_space_task_file.param[1] = (uint64_t)0;
+			kernel_space_handler_wrapper();
 			reg.rax = (uint64_t)0;
 			// kprintf("DEBUG: kernel wait ends\n");
 			
@@ -752,7 +898,7 @@ int64_t isr_handler(handler_reg volatile reg){
 			__asm__ volatile ("int $0x81;");
 			// kprintf("DEBUG: kernel wait ends\n");
 		}else if(reg.rax == 252){
-			// test_print
+			// test_print_num
 			uint64_t num = reg.rdi;
 			kprintf("%x", num);
 		}else if(reg.rax == 253){
@@ -789,11 +935,11 @@ int64_t isr_handler(handler_reg volatile reg){
 		ret = 1;
 	}else if(reg.int_num == 14){
 		// assert(0, "page fault wip\n");
-		uint64_t program_cr3;
-		__asm__ volatile("movq %%cr3, %0":"=r"(program_cr3):);
+		// uint64_t program_cr3;
+		// __asm__ volatile("movq %%cr3, %0":"=r"(program_cr3):);
 		uint64_t requested_addr;
 		__asm__ volatile("movq %%cr2, %0":"=r"(requested_addr):);
-		kprintf("DEBUG: PF. fn:%d, c3:%x, %d, c2:%x, rip:%x\n", reg.err_num, program_cr3, current_process->id, requested_addr, reg.ret_rip);
+		// kprintf("DEBUG: PF. fn:%d, c3:%x, %d, c2:%x, rip:%x\n", reg.err_num, program_cr3, current_process->id, requested_addr, reg.ret_rip);
 		assert(current_process != 0, "no process exist at page fault handler\n");
 		// TODO: check if this is a kernel page fault
 		kernel_space_task_file.type = TASK_PROC_PAGE_FAULT_HANDLE;
@@ -801,6 +947,12 @@ int64_t isr_handler(handler_reg volatile reg){
 		kernel_space_task_file.param[1] = requested_addr;
 		kernel_space_handler_wrapper();
 		handle_sig_pending(&reg);
+		ret = 1;
+	}else if(reg.int_num == 0){
+		kprintf("divide by zero exception. program exiting\n");
+		current_process->on_hold = 1;
+		current_process->terminated = 1;
+		// while(1); // halt the system to figure out what's wrong
 		ret = 1;
 	}else{
 		kprintf("Unhandled interrupt on vector: %d\n", reg.int_num);
@@ -914,6 +1066,10 @@ void kernel_space_handler(struct kernel_task_return_reg reg){
 				page_addr[i] = malloc_addr[i];
 			}
 		}
+	}else if(kernel_space_task_file.type == TASK_PAGE_USED_BY){
+		page_entry* page = (page_entry*)(uint64_t*)kernel_space_task_file.param[0];
+		char used_by = (char)kernel_space_task_file.param[1];
+		page->used_by = used_by;
 	}
 }
 

@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <dirent.h>
+#include <debuglib.h>
 
 int main(int argc, char *argv[], char *envp[]){
 	DIR* dir;
@@ -20,9 +21,10 @@ int main(int argc, char *argv[], char *envp[]){
 		}
 	}
 	while((pDirent = readdir(dir)) != NULL){
+		// _print(pDirent->d_name);
+		// _print("\n");
 		printf("%s\n", pDirent->d_name);
 	}
-	printf("DEBUG: ls complete\n");
 	closedir(dir);
 	return 0;
 }

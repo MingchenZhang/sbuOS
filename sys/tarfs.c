@@ -90,7 +90,7 @@ int64_t tarfs_read(char* file_path, void* buffer, int64_t size, int64_t offset){
 		int64_t file_size = read_oct(((posix_header_ustar*)cursor)->size);
 		if(streq(((posix_header_ustar*)cursor)->name, file_path+1)){
 			int64_t size_to_copy = ((file_size-offset)>size)?size:(file_size-offset);
-			if(size_to_copy < 0) return -1;
+			if(size_to_copy <= 0) return -1;
 			cursor += 512;
 			memcpy(buffer, cursor+offset, size_to_copy);
 			return size_to_copy;

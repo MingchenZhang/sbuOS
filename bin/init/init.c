@@ -4,7 +4,7 @@
 #include <sys/ioctl.h>
 
 char* _argv[] = {"sbush", 0};
-char* _envp[] = {"PATH=/bin/", 0};
+char* _envp[] = {"PATH=/bin", 0};
 
 int main(int argc, char *argv[], char *envp[]){
 	// while(1);
@@ -15,7 +15,7 @@ int main(int argc, char *argv[], char *envp[]){
 		while(1);
 	}else{ // child
 		// _print("init child \n");
-		execvpe("waiter_test", _argv, _envp);
+		execvpe("/bin/sbush", _argv, _envp);
 		// if(sys_test_fork()){
 			// sys_test_exec("test3", _argv, _envp);
 		// }else{

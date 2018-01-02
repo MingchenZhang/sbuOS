@@ -67,12 +67,12 @@ int write_disk_block_req(int disk_i, Process* proc, uint64_t LBA, page_entry* pa
 		c->next = new_task;
 		return 1;
 	}
-	kprintf("1:%d\n", op.result);
+	// kprintf("1:%d\n", op.result);
 	if(!op.result) {
-	kprintf("2:%d\n", op.result);
+	// kprintf("2:%d\n", op.result);
 		return 0;
 	}
-	kprintf("3:%d\n", op.result);
+	// kprintf("3:%d\n", op.result);
 	disk_task* new_task = sf_calloc(sizeof(disk_task), 1);
 	new_task->diskID = disk_i;
 	new_task->slot = op.slot;

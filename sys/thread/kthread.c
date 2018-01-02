@@ -260,7 +260,7 @@ void spawn_process(program_section* section, char* elf_file_path){
 	handler_reg* reg = (void*)(actual_rsp0 + RPOCESS_RSP0_SIZE - 16 - sizeof(handler_reg));// does not support multuple rsp0 pages
 	handler_reg* reg2 = reg - 1;
 	new_p->id = id_count++;
-	new_p->name = "elf process";
+	new_p->name = "init";
 	new_p->next = 0;
 	new_p->cr3 = (uint64_t)PML4;
 	new_p->rsp = (uint64_t)(process_rsp0_start + RPOCESS_RSP0_SIZE - 16- 2*sizeof(handler_reg));
@@ -273,13 +273,16 @@ void spawn_process(program_section* section, char* elf_file_path){
 	file_table_entry* stdin_file = terminal_file_out[0];
 	file_table_entry* stdout_file = terminal_file_in[1];
 	stdin_file->open_count++;
-	stdout_file->open_count++;
+	stdout_file->open_count+=2;
 	open_file_descriptor* stdin_fd = sf_malloc(sizeof(open_file_descriptor));
 	stdin_fd->file_entry = stdin_file;
 	open_file_descriptor* stdout_fd = sf_malloc(sizeof(open_file_descriptor));
 	stdout_fd->file_entry = stdout_file;
+	open_file_descriptor* stderr_fd = sf_malloc(sizeof(open_file_descriptor));
+	stderr_fd->file_entry = stdout_file;
 	new_p->open_fd[0] = stdin_fd;
 	new_p->open_fd[1] = stdout_fd;
+	new_p->open_fd[2] = stderr_fd;
 	// setup basic rsp0 content
 	memset(reg, 0, sizeof(handler_reg));
 	reg->cs = USER_CODE_SEGMENT_SELECTOR;
@@ -423,7 +426,7 @@ Process* fork_process(Process* parent){
 	handler_reg* reg2 = reg - 1;
 	new_p->id = id_count++;
 	new_p->parent = parent;
-	new_p->name = "elf process (forked)";
+	new_p->name = "init (forked)";
 	new_p->next = 0;
 	new_p->cr3 = (uint64_t)PML4;
 	new_p->rsp = (uint64_t)(process_rsp0_start + RPOCESS_RSP0_SIZE - 16- 2*sizeof(handler_reg));
@@ -437,9 +440,11 @@ Process* fork_process(Process* parent){
 	// duplicate file entries
 	for(int i=0; i<FD_SIZE; i++){
 		open_file_descriptor* fd = parent->open_fd[i];
-		if(fd->file_entry){
+		if(fd && fd->file_entry){
+			open_file_descriptor* newfd = sf_malloc(sizeof(open_file_descriptor));
 			fd->file_entry->open_count++;
-			new_p->open_fd[i] = fd;
+			memcpy(newfd, fd, sizeof(open_file_descriptor));
+			new_p->open_fd[i] = newfd;
 		}
 	}
 	// setup basic rsp0 content
@@ -456,8 +461,12 @@ Process* fork_process(Process* parent){
 	reg2->eflags = EFLAG_NO_INTERRUPT; // disable interrupt
 	reg2->ret_rsp = (uint64_t)(process_rsp0_start + RPOCESS_RSP0_SIZE - 16- sizeof(handler_reg));
 	reg2->ret_rip = (uint64_t)AFTER_CONTEXT_SWITCH;
-	// copy the registers, rbp, r9, r8, rax, rcx, rdx, rbx, rsi, rdi;
+	// copy the registers, rbp, r15, r14, r13, r12, r9, r8, rax, rcx, rdx, rbx, rsi, rdi;
 	reg->rbp = parent->saved_reg.rbp;
+	reg->r15  = parent->saved_reg.r15 ;
+	reg->r14  = parent->saved_reg.r14 ;
+	reg->r13  = parent->saved_reg.r13 ;
+	reg->r12  = parent->saved_reg.r12 ;
 	reg->r9  = parent->saved_reg.r9 ;
 	reg->r8  = parent->saved_reg.r8 ;
 	reg->rax = 0;
@@ -476,7 +485,7 @@ Process* fork_process(Process* parent){
 		cursor->next = new_p;
 	}
 	
-	kprintf("DEBUG: thread forked, cr3: %x\n", PML4);
+	// kprintf("DEBUG: thread forked, cr3: %x\n", PML4);
 	return new_p;
 }
 
@@ -609,7 +618,7 @@ void replace_process(Process* proc, program_section* section, uint64_t* initial_
 	uint64_t* cr3 = kernel_task_stack - 2;
 	*cr3 = (uint64_t)PML4;
 	
-	kprintf("DEBUG: thread replaced, cr3: %x, id:%d\n", PML4, new_p->id);
+	// kprintf("DEBUG: thread replaced, cr3: %x, id:%d\n", PML4, new_p->id);
 }
 
 int process_add_signal(uint32_t pid, uint64_t signal){
@@ -657,24 +666,11 @@ void process_cleanup(Process* proc){
 		map_cur = next;
 	}
 	
-	// now remove process from schedule list
-	if(first_process == proc){
-		first_process = proc->next;
-	}else{
-		Process* proc_c = first_process;
-		while(proc_c->next){
-			if(proc_c->next == proc){
-				proc_c->next = proc->next;
-			}else{
-				proc_c = proc_c->next;
-			}
-		}
-	}
-	
 	// close all opened files
 	for(int i=0; i < FD_SIZE; i++){
 		if(proc->open_fd[i]){
 			file_close(proc->open_fd[i]->file_entry);
+			sf_free(proc->open_fd[i]);
 		}
 	}
 	
@@ -724,11 +720,11 @@ void process_schedule(){
 		if(next == current_process){
 			break;
 		}
-		if(!next->on_hold){
+		if(!(next->on_hold || next->terminated)){
 			break;
 		}
 		if(next->terminated && !next->cleaned){
-			// kprintf("DEBUG: cleaning proc id:%d\n", next->id);
+			// kprintf("DEBUG: cleaning proc id:%d, status:%d\n", next->id, next->ret_value);
 			// process_cleanup(next);
 			kernel_space_task_file.type = TASK_PROC_CLEANUP;
 			kernel_space_task_file.param[0] = (uint64_t)next;

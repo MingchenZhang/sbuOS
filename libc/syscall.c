@@ -7,14 +7,14 @@
 
 int errno = 0;
 
-void (*handlers[64])(uint64_t);
+void (*handlers[64])(int);
 
 struct dirent static_dirent;
 
 void default_sig_handler(uint64_t sig_num){
 	if(sig_num >= 64) sys_sig_return();
 	if(handlers[sig_num]){
-		(handlers[sig_num])(sig_num);
+		(handlers[sig_num])((int)sig_num);
 	}else if(sig_num == SIGINT || sig_num == SIGSEGV){
 		exit(1);
 	}
@@ -61,13 +61,8 @@ int kill(pid_t pid, int sig){
 	}
 }
 sighandler_t signal(int signum, sighandler_t handler){
-	int result = sys_set_signal_handler( (void (*)(uint64_t))handler );
-	if(result<0) {
-		errno = 0-result;
-		return 0;
-	}else{
-		return handler;
-	}
+	handlers[signum] = handler;
+	return handler;
 }
 int putchar(int c){
 	char buffer;
@@ -179,15 +174,6 @@ pid_t fork(){
 		return (pid_t)result;
 	}
 }
-int execvpe(const char *file, char *const argv[], char *const envp[]){
-	int64_t result = sys_exec(file, argv, envp);
-	if(result<0) {
-		errno = 0-result;
-		return -1;
-	}else{
-		return 0;
-	}
-}
 pid_t wait(int *ret_status){
 	int64_t result = sys_wait((int64_t)-1, ret_status);
 	if(result<0) {
@@ -281,11 +267,38 @@ int dup2(int oldfd, int newfd){
 		return 0;
 	}
 }
-int execvp(const char *file, char *const argv[]){
-	return execvpe(file, argv, environ);
+
+int alarm(int sec){
+	int64_t result = sys_alarm(sec);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return 0;
+	}
 }
+
 void yield(){
 	sys_yield();
+}
+
+int list_pid(int* buffer, size_t size){
+	int64_t result = sys_list_pid(buffer, size);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return result;
+	}
+}
+int pid_name(char* buffer, int pid, size_t size){
+	int64_t result = sys_pid_name(buffer, pid, size);
+	if(result<0) {
+		errno = 0-result;
+		return -1;
+	}else{
+		return 0;
+	}
 }
 
 void _print(char* str){

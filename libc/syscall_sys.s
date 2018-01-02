@@ -159,6 +159,18 @@ sys_alarm:
 	movq $123, %rax
 	int $0x80
 	ret
+
+.global sys_list_pid
+sys_list_pid:
+	movq $124, %rax
+	int $0x80
+	ret
+
+.global sys_pid_name
+sys_pid_name:
+	movq $125, %rax
+	int $0x80
+	ret
 	
 .global sys_yield
 sys_yield:
